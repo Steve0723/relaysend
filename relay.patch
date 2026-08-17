@@ -102,7 +102,7 @@ diff --git a/app/lib/pages/donation/donation_page_vm.dart b/app/lib/pages/donati
 index 9a7387c..75ea7a5 100644
 --- a/app/lib/pages/donation/donation_page_vm.dart
 +++ b/app/lib/pages/donation/donation_page_vm.dart
-@@ -1,6 +1,6 @@
+@@ -1,8 +1,8 @@
  import 'package:localsend_app/model/state/purchase_state.dart';
  // [FOSS_REMOVE_START]
  import 'package:localsend_app/provider/purchase_provider.dart';
@@ -110,6 +110,8 @@ index 9a7387c..75ea7a5 100644
  import 'package:localsend_app/util/native/platform_check.dart';
 +// [FOSS_REMOVE_END]
  import 'package:refena_flutter/refena_flutter.dart';
+ 
+ class DonationPageVm {
 diff --git a/app/lib/pages/progress_page.dart b/app/lib/pages/progress_page.dart
 index 99d666f..533dc96 100644
 --- a/app/lib/pages/progress_page.dart
@@ -263,10 +265,16 @@ index 99d666f..533dc96 100644
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
 diff --git a/app/lib/pages/tabs/settings_tab.dart b/app/lib/pages/tabs/settings_tab.dart
-index a2b92fc..e743f2b 100644
+index a2b92fc..2b96273 100644
 --- a/app/lib/pages/tabs/settings_tab.dart
 +++ b/app/lib/pages/tabs/settings_tab.dart
-@@ -11,6 +11,8 @@ import 'package:localsend_app/pages/donation/donation_page.dart';
+@@ -1,5 +1,3 @@
+-import 'dart:io';
+-
+ import 'package:flutter/foundation.dart';
+ import 'package:flutter/material.dart';
+ import 'package:localsend_app/config/theme.dart';
+@@ -11,11 +9,14 @@ import 'package:localsend_app/pages/donation/donation_page.dart';
  import 'package:localsend_app/pages/settings/network_interfaces_page.dart';
  import 'package:localsend_app/pages/tabs/settings_tab_controller.dart';
  import 'package:localsend_app/provider/network/server/server_provider.dart';
@@ -275,7 +283,13 @@ index a2b92fc..e743f2b 100644
  import 'package:localsend_app/provider/settings_provider.dart';
  import 'package:localsend_app/provider/version_provider.dart';
  import 'package:localsend_app/util/alias_generator.dart';
-@@ -353,6 +355,13 @@ class SettingsTab extends StatelessWidget {
+ import 'package:localsend_app/util/device_type_ext.dart';
+ import 'package:localsend_app/util/i18n.dart';
++import 'package:localsend_app/util/native/device_info_helper.dart';
+ import 'package:localsend_app/util/native/macos_channel.dart';
+ import 'package:localsend_app/util/native/pick_directory_path.dart';
+ import 'package:localsend_app/util/native/platform_check.dart';
+@@ -353,6 +354,20 @@ class SettingsTab extends StatelessWidget {
                      ),
                    ),
                  ),
@@ -286,10 +300,33 @@ index a2b92fc..e743f2b 100644
 +                    await editRelayServers(context, ref);
 +                  },
 +                ),
++                _ButtonEntry(
++                  label: 'STUN/TURN server',
++                  buttonLabel: 'Configure',
++                  onTap: () async {
++                    await editIceServers(context, ref);
++                  },
++                ),
                  _SettingsEntry(
                    label: t.settingsTab.network.alias,
                    child: TextFieldWithActions(
-@@ -772,3 +781,53 @@ extension on ColorMode {
+@@ -382,14 +397,7 @@ class SettingsTab extends StatelessWidget {
+                         message: t.settingsTab.network.useSystemName,
+                         child: IconButton(
+                           onPressed: () async {
+-                            final String newAlias;
+-                            if (Platform.isMacOS) {
+-                              final result = await Process.run('scutil', ['--get', 'ComputerName']);
+-                              newAlias = result.stdout.toString().trim();
+-                            } else {
+-                              newAlias = Platform.localHostname;
+-                            }
+-
++                            final newAlias = await getSystemDeviceName();
+                             vm.aliasController.text = newAlias;
+                             await ref.notifier(settingsProvider).setAlias(newAlias);
+                           },
+@@ -772,3 +780,102 @@ extension on ColorMode {
      };
    }
  }
@@ -342,6 +379,55 @@ index a2b92fc..e743f2b 100644
 +  await ref.read(persistenceProvider).setSignalingServers(nextServers);
 +  ref.redux(signalingProvider).dispatch(SetSignalingServersAction(nextServers));
 +  ref.redux(signalingProvider).dispatch(SetupSignalingConnection());
++}
++
++Future<void> editIceServers(BuildContext context, Ref ref) async {
++  final servers = [...ref.read(signalingProvider).stunServers];
++  final controller = TextEditingController(text: servers.join('\n'));
++
++  final result = await showDialog<String>(
++    context: context,
++    builder: (context) {
++      return AlertDialog(
++        title: const Text('STUN/TURN server'),
++        content: SizedBox(
++          width: 420,
++          child: TextField(
++            controller: controller,
++            maxLines: 8,
++            decoration: const InputDecoration(
++              hintText: 'stun:relay.example.com:3478\nturn:username:password@relay.example.com:3478?transport=tcp',
++            ),
++          ),
++        ),
++        actions: [
++          TextButton(
++            onPressed: () => Navigator.pop(context),
++            child: const Text('Cancel'),
++          ),
++          FilledButton(
++            onPressed: () => Navigator.pop(context, controller.text),
++            child: const Text('Save'),
++          ),
++        ],
++      );
++    },
++  );
++  controller.dispose();
++
++  if (result == null) {
++    return;
++  }
++
++  final nextServers = result
++      .split('\n')
++      .map((server) => server.trim())
++      .where((server) => server.isNotEmpty)
++      .toSet()
++      .toList();
++
++  await ref.read(persistenceProvider).setStunServers(nextServers);
++  ref.redux(signalingProvider).dispatch(SetStunServersAction(nextServers));
 +}
 diff --git a/app/lib/provider/network/send_provider.dart b/app/lib/provider/network/send_provider.dart
 index d4adf33..4b94925 100644
@@ -677,8 +763,30 @@ index d4adf33..4b94925 100644
    final uriContent = UriContent();
  
    /// Sends a single file. Currently only used to retry a failed file.
+diff --git a/app/lib/provider/network/server/server_provider.dart b/app/lib/provider/network/server/server_provider.dart
+index 80b6fb7..81d2f41 100644
+--- a/app/lib/provider/network/server/server_provider.dart
++++ b/app/lib/provider/network/server/server_provider.dart
+@@ -8,7 +8,7 @@ import 'package:localsend_app/provider/network/server/controller/receive_control
+ import 'package:localsend_app/provider/network/server/controller/send_controller.dart';
+ import 'package:localsend_app/provider/network/server/server_utils.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+-import 'package:localsend_app/util/alias_generator.dart';
++import 'package:localsend_app/util/native/device_info_helper.dart';
+ import 'package:localsend_isolates/constants.dart';
+ import 'package:localsend_isolates/isolate.dart';
+ import 'package:localsend_isolates/model/dto/multicast_dto.dart';
+@@ -126,7 +126,7 @@ class ServerService extends Notifier<ServerState?> {
+ 
+     alias = alias.trim();
+     if (alias.isEmpty) {
+-      alias = generateRandomAlias();
++      alias = await getSystemDeviceName();
+     }
+ 
+     if (port < 0 || port > 65535) {
 diff --git a/app/lib/provider/network/webrtc/signaling_provider.dart b/app/lib/provider/network/webrtc/signaling_provider.dart
-index 05f29ca..6fbb08b 100644
+index 05f29ca..812513e 100644
 --- a/app/lib/provider/network/webrtc/signaling_provider.dart
 +++ b/app/lib/provider/network/webrtc/signaling_provider.dart
 @@ -1,25 +1,24 @@
@@ -725,7 +833,7 @@ index 05f29ca..6fbb08b 100644
        // ignore: discarded_futures
        global.dispatchAsync(_SetupSignalingConnection(signalingServer: signalingServer));
      }
-@@ -68,6 +72,17 @@ class SetupSignalingConnection extends ReduxAction<SignalingService, SignalingSt
+@@ -68,6 +72,28 @@ class SetupSignalingConnection extends ReduxAction<SignalingService, SignalingSt
    }
  }
  
@@ -740,10 +848,21 @@ index 05f29ca..6fbb08b 100644
 +  }
 +}
 +
++class SetStunServersAction extends ReduxAction<SignalingService, SignalingState> {
++  final List<String> stunServers;
++
++  SetStunServersAction(this.stunServers);
++
++  @override
++  SignalingState reduce() {
++    return state.copyWith(stunServers: stunServers);
++  }
++}
++
  /// Starts an endless running action.
  class _SetupSignalingConnection extends AsyncGlobalAction {
    final String signalingServer;
-@@ -79,22 +94,16 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+@@ -79,22 +105,16 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
      final settings = ref.read(settingsProvider);
      final deviceInfo = ref.read(deviceInfoProvider);
  
@@ -768,7 +887,7 @@ index 05f29ca..6fbb08b 100644
        onConnection: (c) {
          connection = c;
  
-@@ -151,10 +160,21 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+@@ -151,10 +171,21 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
                  offer: message.field0,
                  settings: ref.read(settingsProvider),
                  favorites: ref.read(favoritesProvider),
@@ -1382,10 +1501,18 @@ index b58ba85..93f1bd9 100644
        metadata: metadata?.toFileMetadata(),
      );
 diff --git a/app/lib/provider/persistence_provider.dart b/app/lib/provider/persistence_provider.dart
-index 55a6f18..3ead6f1 100644
+index 55a6f18..5b2a304 100644
 --- a/app/lib/provider/persistence_provider.dart
 +++ b/app/lib/provider/persistence_provider.dart
-@@ -22,6 +22,7 @@ import 'package:localsend_app/util/ui/animations_status.dart';
+@@ -14,6 +14,7 @@ import 'package:localsend_app/provider/window_dimensions_provider.dart';
+ import 'package:localsend_app/util/alias_generator.dart';
+ import 'package:localsend_app/util/native/autostart_helper.dart';
+ import 'package:localsend_app/util/native/context_menu_helper.dart';
++import 'package:localsend_app/util/native/device_info_helper.dart';
+ import 'package:localsend_app/util/native/platform_check.dart';
+ import 'package:localsend_app/util/security_helper.dart';
+ import 'package:localsend_app/util/shared_preferences/shared_preferences_file.dart';
+@@ -22,6 +23,7 @@ import 'package:localsend_app/util/ui/animations_status.dart';
  import 'package:localsend_isolates/constants.dart';
  import 'package:localsend_isolates/model/device.dart';
  import 'package:localsend_isolates/model/stored_security_context.dart';
@@ -1393,7 +1520,7 @@ index 55a6f18..3ead6f1 100644
  import 'package:logging/logging.dart';
  import 'package:refena_flutter/refena_flutter.dart';
  import 'package:shared_preferences/shared_preferences.dart';
-@@ -49,6 +50,7 @@ const _version = 'ls_version';
+@@ -49,6 +51,7 @@ const _version = 'ls_version';
  const _securityContext = 'ls_security_context';
  
  // WebRTC
@@ -1401,7 +1528,32 @@ index 55a6f18..3ead6f1 100644
  const _signalingServers = 'ls_signaling_servers';
  const _stunServers = 'ls_stun_servers';
  
-@@ -174,6 +176,17 @@ class PersistenceService {
+@@ -68,6 +71,7 @@ const _saveWindowPlacement = 'ls_save_window_placement';
+ // Settings
+ const _showToken = 'ls_show_token';
+ const _aliasKey = 'ls_alias';
++const _aliasCustomKey = 'ls_alias_custom';
+ const _themeKey = 'ls_theme'; // now called brightness
+ const _colorKey = 'ls_color';
+ const _customColorKey = 'ls_custom_color'; // RRGGBB hex, used by ColorMode.custom
+@@ -166,14 +170,32 @@ class PersistenceService {
+       await prefs.setString(_showToken, const Uuid().v4());
+     }
+ 
+-    if (prefs.getString(_aliasKey) == null) {
+-      await prefs.setString(_aliasKey, generateRandomAlias());
++    final storedAlias = prefs.getString(_aliasKey);
++    var aliasCustom = prefs.getBool(_aliasCustomKey);
++    if (aliasCustom == null) {
++      aliasCustom = storedAlias != null && !isGeneratedAlias(storedAlias);
++      await prefs.setBool(_aliasCustomKey, aliasCustom);
++    }
++
++    if (!aliasCustom) {
++      await prefs.setString(_aliasKey, await getSystemDeviceName());
+     }
+ 
+     if (prefs.getString(_securityContext) == null) {
        await prefs.setString(_securityContext, jsonEncode(await generateSecurityContext()));
      }
  
@@ -1419,7 +1571,7 @@ index 55a6f18..3ead6f1 100644
      if (isFirstAppStart) {
        final systemAnimations = await getSystemAnimationsStatus();
        if (!systemAnimations) {
-@@ -226,6 +239,14 @@ class PersistenceService {
+@@ -226,6 +248,14 @@ class PersistenceService {
      await _prefs.setString(_securityContext, jsonEncode(context));
    }
  
@@ -1434,8 +1586,101 @@ index 55a6f18..3ead6f1 100644
    List<String>? getSignalingServers() {
      final serversRaw = _prefs.getString(_signalingServers);
      if (serversRaw == null) {
+@@ -277,10 +307,11 @@ class PersistenceService {
+   }
+ 
+   String getAlias() {
+-    return _prefs.getString(_aliasKey) ?? generateRandomAlias();
++    return _prefs.getString(_aliasKey) ?? 'RelaySend';
+   }
+ 
+   Future<void> setAlias(String alias) async {
++    await _prefs.setBool(_aliasCustomKey, true);
+     await _prefs.setString(_aliasKey, alias);
+   }
+ 
+diff --git a/app/lib/util/alias_generator.dart b/app/lib/util/alias_generator.dart
+index 6fef585..4c7f4c0 100644
+--- a/app/lib/util/alias_generator.dart
++++ b/app/lib/util/alias_generator.dart
+@@ -13,3 +13,17 @@ String generateRandomAlias() {
+     fruit: fruits[random.nextInt(fruits.length)],
+   );
+ }
++
++bool isGeneratedAlias(String alias) {
++  for (final locale in AppLocale.values) {
++    final generator = locale.translations.aliasGenerator;
++    for (final adjective in generator.adjectives) {
++      for (final fruit in generator.fruits) {
++        if (generator.combination(adjective: adjective, fruit: fruit) == alias) {
++          return true;
++        }
++      }
++    }
++  }
++  return false;
++}
+diff --git a/app/lib/util/native/device_info_helper.dart b/app/lib/util/native/device_info_helper.dart
+index fc6e878..149899b 100644
+--- a/app/lib/util/native/device_info_helper.dart
++++ b/app/lib/util/native/device_info_helper.dart
+@@ -7,6 +7,53 @@ import 'package:slang/src/builder/model/enums.dart';
+ // ignore: implementation_imports
+ import 'package:slang/src/builder/utils/string_extensions.dart';
+ 
++Future<String> getSystemDeviceName() async {
++  try {
++    if (kIsWeb) {
++      return 'RelaySend';
++    }
++
++    final plugin = DeviceInfoPlugin();
++    switch (defaultTargetPlatform) {
++      case TargetPlatform.android:
++        final deviceInfo = await plugin.androidInfo;
++        return _firstNonEmpty([deviceInfo.name, deviceInfo.model]);
++      case TargetPlatform.iOS:
++        final deviceInfo = await plugin.iosInfo;
++        return _firstNonEmpty([deviceInfo.name, deviceInfo.localizedModel, deviceInfo.modelName]);
++      case TargetPlatform.macOS:
++        final deviceInfo = await plugin.macOsInfo;
++        return _firstNonEmpty([_withoutDomain(deviceInfo.computerName)]);
++      case TargetPlatform.windows:
++        final deviceInfo = await plugin.windowsInfo;
++        return _firstNonEmpty([_withoutDomain(deviceInfo.computerName)]);
++      case TargetPlatform.linux:
++        final deviceInfo = await plugin.linuxInfo;
++        return _firstNonEmpty([deviceInfo.prettyName, deviceInfo.name]);
++      case TargetPlatform.fuchsia:
++        return 'RelaySend';
++    }
++  } catch (_) {
++    return 'RelaySend';
++  }
++}
++
++String _withoutDomain(String value) {
++  final trimmed = value.trim();
++  final dot = trimmed.indexOf('.');
++  return dot > 0 ? trimmed.substring(0, dot) : trimmed;
++}
++
++String _firstNonEmpty(List<String> values) {
++  for (final value in values) {
++    final trimmed = value.trim();
++    if (trimmed.isNotEmpty) {
++      return trimmed;
++    }
++  }
++  return 'RelaySend';
++}
++
+ Future<DeviceInfoResult> getDeviceInfo() async {
+   final plugin = DeviceInfoPlugin();
+   final DeviceType deviceType;
 diff --git a/packages/core/Cargo.toml b/packages/core/Cargo.toml
-index 8e99dfa..b12bc76 100644
+index 8e99dfa..4a26be7 100644
 --- a/packages/core/Cargo.toml
 +++ b/packages/core/Cargo.toml
 @@ -37,6 +37,7 @@ tokio-util = { version = "0.7.19", features = ["rt"], optional = true }
@@ -1446,6 +1691,18 @@ index 8e99dfa..b12bc76 100644
  uuid = { version = "1.24.0", features = ["serde", "v4"] }
  webrtc = { version = "0.14.0", optional = true }
  x509-parser = { version = "0.18.1", features = ["verify"], optional = true }
+@@ -53,9 +54,9 @@ required-features = ["http"]
+ 
+ [features]
+ default = []
+-crypto = ["ed25519-dalek", "rcgen", "rsa", "sha2", "tokio-util"]
++crypto = ["dep:pem", "ed25519-dalek", "rcgen", "rsa", "sha2", "tokio-util"]
+ discovery = ["http", "multicast"]
+-http = ["crypto", "form_urlencoded", "http-body-util", "hyper", "hyper-util", "if-addrs", "pem", "percent-encoding", "reqwest", "rustls", "socket2", "time", "tokio-rustls", "tokio-util", "x509-parser"]
++http = ["crypto", "form_urlencoded", "http-body-util", "hyper", "hyper-util", "if-addrs", "dep:pem", "percent-encoding", "reqwest", "rustls", "socket2", "time", "tokio-rustls", "tokio-util", "x509-parser"]
+ multicast = ["if-addrs", "socket2", "tokio-util"]
+ webrtc-signaling = ["tokio-tungstenite"]
+ webrtc = ["crypto", "flate2", "dep:webrtc", "webrtc-signaling", "x509-parser"]
 diff --git a/packages/core/src/webrtc/webrtc.rs b/packages/core/src/webrtc/webrtc.rs
 index e12a995..5093270 100644
 --- a/packages/core/src/webrtc/webrtc.rs
@@ -1544,10 +1801,10 @@ index 9bef482..f65ff8e 100644
 +EXPOSE 18080
  ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..0d15140 100644
+index 07b8b65..5fbd3b0 100644
 --- a/server/README.md
 +++ b/server/README.md
-@@ -1,3 +1,85 @@
+@@ -1,3 +1,98 @@
  # LocalSend Signaling Server
  
 -A signaling server for LocalSend. Using Rust and WebSockets.
@@ -1603,6 +1860,18 @@ index 07b8b65..0d15140 100644
 +docker compose -f server/docker-compose.yml up -d --build
 +```
 +
++服务端和 coturn 会一起启动。使用前确认 TURN 的 `TURN_USER` 和 `TURN_PASSWORD`，
++不要让服务器暴露在默认弱密码下。客户端在“设置 -> 网络 -> STUN/TURN server”中
++填入：
++
++```text
++stun:你的域名或服务器IP:3478
++turn:用户名:密码@你的域名或服务器IP:3478?transport=tcp
++```
++
++Docker Compose 中 coturn 使用 host 网络，默认占用 `3478/tcp`、`3478/udp` 和
++`49160-49200/udp`。云服务器需要在安全组中放行这些端口。
++
 +客户端连接地址为 `ws://服务器IP:18080/v1/ws`。生产环境建议使用 Nginx 或 Caddy
 +提供 `wss://` 和 TLS，并正确透传 `X-Forwarded-For`，否则所有客户端会被反代 IP
 +分到同一来源组。
@@ -1634,6 +1903,7 @@ index 07b8b65..0d15140 100644
 +- TURN：`turn:公网地址:3478`，带用户名和密码
 +
 +客户端还应配置本服务器的 WebSocket 地址作为信令服务器。
++`docker-compose.yml` 已把 coturn 作为公网 TURN 兜底一起部署。
 diff --git a/server/src/config/init.rs b/server/src/config/init.rs
 index 9d51d6e..d52d559 100644
 --- a/server/src/config/init.rs
@@ -2144,10 +2414,10 @@ index 0000000..0368495
 +}
 diff --git a/server/docker-compose.yml b/server/docker-compose.yml
 new file mode 100644
-index 0000000..0bc3552
+index 0000000..957a6ce
 --- /dev/null
 +++ b/server/docker-compose.yml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,47 @@
 +services:
 +  relaysend-server:
 +    build:
@@ -2169,6 +2439,29 @@ index 0000000..0bc3552
 +      SHARE_DATA_DIR: /data/shares
 +    volumes:
 +      - relaysend-share-data:/data/shares
++
++  coturn:
++    image: coturn/coturn:4.6.3
++    container_name: relaysend-coturn
++    restart: unless-stopped
++    network_mode: host
++    environment:
++      TURN_REALM: ${TURN_REALM:-relay.example.com}
++      TURN_USER: ${TURN_USER:-relay}
++      TURN_PASSWORD: ${TURN_PASSWORD:-change-me-before-use}
++    command: >
++      -n
++      --log-file=stdout
++      --realm=${TURN_REALM:-relay.example.com}
++      --server-name=${TURN_REALM:-relay.example.com}
++      --listening-port=3478
++      --min-port=49160
++      --max-port=49200
++      --fingerprint
++      --lt-cred-mech
++      --user=${TURN_USER:-relay}:${TURN_PASSWORD:-change-me-before-use}
++      --no-cli
++      --no-multicast-peers
 +
 +volumes:
 +  relaysend-share-data:

@@ -41,8 +41,8 @@ MAX_CONNECTIONS_PER_IP=20 \
 客户端信令地址为 `ws://服务器IP:18080/v1/ws`。生产环境请放在 Nginx 或 Caddy
 后面启用 TLS，并确保透传 `X-Forwarded-For`。
 
-如果客户端需要跨 NAT 传输，还需要配置公网 TURN 服务，并在客户端 ICE server
-中加入 STUN/TURN 地址。
+如果客户端需要跨 NAT 传输，Docker Compose 已内置 coturn。部署后打开防火墙的
+`3478/tcp`、`3478/udp` 和 `49160-49200/udp`，然后在客户端配置 STUN/TURN。
 
 ### Docker 部署
 
@@ -54,8 +54,10 @@ bash deploy.sh
 ```
 
 脚本会在当前目录创建 `relaysend-server/`，下载 `Dockerfile`、
-`docker-compose.yml` 和 `relay.patch`，然后执行 `docker compose up -d --build`。
-部署目录可通过环境变量 `RELAYSEND_DEPLOY_DIR` 修改。
+`docker-compose.yml` 和 `relay.patch`，自动生成包含随机 TURN 密码的 `.env`，
+然后执行 `docker compose up -d --build`。部署目录可通过环境变量
+`RELAYSEND_DEPLOY_DIR` 修改，TURN 用户名/密码可通过 `TURN_USER` 和
+`TURN_PASSWORD` 预先指定。
 
 在本仓库根目录直接构建镜像并启动，构建时会自动拉取 LocalSend 基线并应用
 `relay.patch`：
@@ -77,6 +79,15 @@ docker run -d --name relaysend-server \
 ```bash
 docker compose up -d --build
 ```
+
+Docker Compose 会同时启动 RelaySend 信令服务和 coturn。首次使用建议先检查
+生成的 `.env`，确认 TURN 用户和密码没有被泄露。
+
+| TURN 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TURN_REALM` | `relay.example.com` | coturn realm，客户端配置不需要填写 |
+| `TURN_USER` | `relay` | TURN 用户名 |
+| `TURN_PASSWORD` | `change-me-before-use` | TURN 密码，必须改成强密码 |
 
 可选环境变量：
 
@@ -129,6 +140,16 @@ server {
 wss://relay.example.com/v1/ws
 ```
 
+公网传输需要在客户端“设置 -> 网络 -> STUN/TURN server”中配置：
+
+```text
+stun:relay.example.com:3478
+turn:用户名:密码@relay.example.com:3478?transport=tcp
+```
+
+如果没有域名，也可以直接使用服务器公网 IP，并把信令地址写成
+`wss://服务器IP/v1/ws`。
+
 ## 临时网页分享
 
 不需要安装 RelaySend 的设备可以打开：
@@ -154,7 +175,8 @@ https://relay.example.com/share
 ws://123.45.67.89:18080/v1/ws
 ```
 
-Windows 客户端同样在“设置 -> 网络 -> Relay server”中配置。
+Windows 客户端同样在“设置 -> 网络 -> Relay server”中配置信令服务器，在
+“STUN/TURN server”中配置跨 NAT 传输地址。
 
 设备需要和服务器保持 WebSocket 连接才能显示在线状态和参与信令交换。
 

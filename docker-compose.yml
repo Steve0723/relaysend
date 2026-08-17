@@ -21,5 +21,28 @@ services:
     volumes:
       - relaysend-share-data:/data/shares
 
+  coturn:
+    image: coturn/coturn:4.6.3
+    container_name: relaysend-coturn
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TURN_REALM: ${TURN_REALM:-relay.example.com}
+      TURN_USER: ${TURN_USER:-relay}
+      TURN_PASSWORD: ${TURN_PASSWORD:-change-me-before-use}
+    command: >
+      -n
+      --log-file=stdout
+      --realm=${TURN_REALM:-relay.example.com}
+      --server-name=${TURN_REALM:-relay.example.com}
+      --listening-port=3478
+      --min-port=49160
+      --max-port=49200
+      --fingerprint
+      --lt-cred-mech
+      --user=${TURN_USER:-relay}:${TURN_PASSWORD:-change-me-before-use}
+      --no-cli
+      --no-multicast-peers
+
 volumes:
   relaysend-share-data:
