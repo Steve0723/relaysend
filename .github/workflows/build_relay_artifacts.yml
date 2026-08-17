@@ -204,7 +204,7 @@ jobs:
           path: localsend/target/release/server
 
   release:
-    needs: [android, windows, server]
+    needs: [prepare, android, windows, server]
     runs-on: ubuntu-24.04
     steps:
       - name: Download artifacts
