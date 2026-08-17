@@ -66,6 +66,20 @@ index 47ac3a6..43ac83f 100644
                  break;
                case AppLifecycleState.detached:
                  // The main isolate is only exited when all child isolates are exited.
+diff --git a/app/lib/pages/donation/donation_page_vm.dart b/app/lib/pages/donation/donation_page_vm.dart
+index 9a7387c..75ea7a5 100644
+--- a/app/lib/pages/donation/donation_page_vm.dart
++++ b/app/lib/pages/donation/donation_page_vm.dart
+@@ -1,8 +1,8 @@
+ import 'package:localsend_app/model/state/purchase_state.dart';
+ // [FOSS_REMOVE_START]
+ import 'package:localsend_app/provider/purchase_provider.dart';
+-// [FOSS_REMOVE_END]
+ import 'package:localsend_app/util/native/platform_check.dart';
++// [FOSS_REMOVE_END]
+ import 'package:refena_flutter/refena_flutter.dart';
+ 
+ class DonationPageVm {
 diff --git a/app/lib/pages/progress_page.dart b/app/lib/pages/progress_page.dart
 index 99d666f..533dc96 100644
 --- a/app/lib/pages/progress_page.dart
@@ -648,47 +662,6 @@ index 05f29ca..f872cf6 100644
              await ref.redux(provider).dispatchAsync(AcceptOfferAction());
              break;
            case WsServerMessage_Answer():
-diff --git a/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
-new file mode 100644
-index 0000000..0368495
---- /dev/null
-+++ b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
-@@ -0,0 +1,35 @@
-+import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
-+import 'package:refena_flutter/refena_flutter.dart';
-+
-+/// A live handle to a WebRTC receive session, used by pages that are not
-+/// created inside [WebRTCReceiveService] (notably [ProgressPage]).
-+class WebRTCReceiveSessionHandle {
-+  final String sessionId;
-+  final ReduxProvider<WebRTCReceiveService, WebRTCReceiveState> provider;
-+
-+  const WebRTCReceiveSessionHandle({
-+    required this.sessionId,
-+    required this.provider,
-+  });
-+}
-+
-+/// Tracks active WebRTC receive sessions by the session id from the SDP offer.
-+final webRTCReceiveSessionsProvider = NotifierProvider<WebRTCReceiveSessionsService, Map<String, WebRTCReceiveSessionHandle>>((ref) {
-+  return WebRTCReceiveSessionsService();
-+});
-+
-+class WebRTCReceiveSessionsService extends Notifier<Map<String, WebRTCReceiveSessionHandle>> {
-+  @override
-+  Map<String, WebRTCReceiveSessionHandle> init() => {};
-+
-+  void register(WebRTCReceiveSessionHandle handle) {
-+    state = {
-+      ...state,
-+      handle.sessionId: handle,
-+    };
-+  }
-+
-+  void unregister(String sessionId) {
-+    state = {...state}..remove(sessionId);
-+  }
-+}
 diff --git a/app/lib/provider/network/webrtc/webrtc_receiver.dart b/app/lib/provider/network/webrtc/webrtc_receiver.dart
 index b58ba85..93f1bd9 100644
 --- a/app/lib/provider/network/webrtc/webrtc_receiver.dart
