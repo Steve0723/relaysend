@@ -1,4 +1,4 @@
-# LocalSend Relay
+# RelaySend
 
 基于 LocalSend 的二次开发版，目标是让 Android、Windows、Linux 等设备在同一个
 WebRTC 信令服务器下互相发现和传输。
@@ -57,7 +57,7 @@ ws://123.45.67.89:3000/v1/ws
 GitHub 并触发 `build_relay_artifacts.yml`，Actions 会自动构建：
 
 ```text
-LocalSend-<version>-windows-x86-64.zip
+RelaySend-<version>-windows-x86-64.zip
 ```
 
 也可以在 Windows 机器上使用 Flutter 3.41.9 和 Rust 执行：
