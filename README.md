@@ -46,6 +46,17 @@ MAX_CONNECTIONS_PER_IP=20 \
 
 ### Docker 部署
 
+服务器上可以一条命令下载需要的部署文件并启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Steve0723/relaysend/main/deploy.sh -o deploy.sh
+bash deploy.sh
+```
+
+脚本会在当前目录创建 `relaysend-server/`，下载 `Dockerfile`、
+`docker-compose.yml` 和 `relay.patch`，然后执行 `docker compose up -d --build`。
+部署目录可通过环境变量 `RELAYSEND_DEPLOY_DIR` 修改。
+
 在本仓库根目录直接构建镜像并启动，构建时会自动拉取 LocalSend 基线并应用
 `relay.patch`：
 
