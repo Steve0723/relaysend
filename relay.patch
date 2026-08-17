@@ -1,8 +1,16 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index fe6ce2a..378725d 100644
+index fe6ce2a..3f218f4 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -2213,6 +2213,7 @@ dependencies = [
+@@ -310,6 +310,7 @@ dependencies = [
+  "matchit",
+  "memchr",
+  "mime",
++ "multer",
+  "percent-encoding",
+  "pin-project-lite",
+  "serde_core",
+@@ -2213,6 +2214,7 @@ dependencies = [
   "tracing",
   "tracing-subscriber",
   "tungstenite 0.30.0",
@@ -10,6 +18,30 @@ index fe6ce2a..378725d 100644
   "uuid",
   "webrtc",
   "x509-parser 0.18.1",
+@@ -2371,6 +2373,23 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "multer"
++version = "3.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
++dependencies = [
++ "bytes",
++ "encoding_rs",
++ "futures-util",
++ "http",
++ "httparse",
++ "memchr",
++ "mime",
++ "spin",
++ "version_check",
++]
++
+ [[package]]
+ name = "nix"
+ version = "0.26.4"
 diff --git a/app/lib/main.dart b/app/lib/main.dart
 index 47ac3a6..43ac83f 100644
 --- a/app/lib/main.dart
@@ -70,7 +102,7 @@ diff --git a/app/lib/pages/donation/donation_page_vm.dart b/app/lib/pages/donati
 index 9a7387c..75ea7a5 100644
 --- a/app/lib/pages/donation/donation_page_vm.dart
 +++ b/app/lib/pages/donation/donation_page_vm.dart
-@@ -1,8 +1,8 @@
+@@ -1,6 +1,6 @@
  import 'package:localsend_app/model/state/purchase_state.dart';
  // [FOSS_REMOVE_START]
  import 'package:localsend_app/provider/purchase_provider.dart';
@@ -78,8 +110,6 @@ index 9a7387c..75ea7a5 100644
  import 'package:localsend_app/util/native/platform_check.dart';
 +// [FOSS_REMOVE_END]
  import 'package:refena_flutter/refena_flutter.dart';
- 
- class DonationPageVm {
 diff --git a/app/lib/pages/progress_page.dart b/app/lib/pages/progress_page.dart
 index 99d666f..533dc96 100644
 --- a/app/lib/pages/progress_page.dart
@@ -232,6 +262,87 @@ index 99d666f..533dc96 100644
                      child: Row(
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
+diff --git a/app/lib/pages/tabs/settings_tab.dart b/app/lib/pages/tabs/settings_tab.dart
+index a2b92fc..e743f2b 100644
+--- a/app/lib/pages/tabs/settings_tab.dart
++++ b/app/lib/pages/tabs/settings_tab.dart
+@@ -11,6 +11,8 @@ import 'package:localsend_app/pages/donation/donation_page.dart';
+ import 'package:localsend_app/pages/settings/network_interfaces_page.dart';
+ import 'package:localsend_app/pages/tabs/settings_tab_controller.dart';
+ import 'package:localsend_app/provider/network/server/server_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/signaling_provider.dart';
++import 'package:localsend_app/provider/persistence_provider.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+ import 'package:localsend_app/provider/version_provider.dart';
+ import 'package:localsend_app/util/alias_generator.dart';
+@@ -353,6 +355,13 @@ class SettingsTab extends StatelessWidget {
+                     ),
+                   ),
+                 ),
++                _ButtonEntry(
++                  label: 'Relay server',
++                  buttonLabel: 'Configure',
++                  onTap: () async {
++                    await editRelayServers(context, ref);
++                  },
++                ),
+                 _SettingsEntry(
+                   label: t.settingsTab.network.alias,
+                   child: TextFieldWithActions(
+@@ -772,3 +781,53 @@ extension on ColorMode {
+     };
+   }
+ }
++
++Future<void> editRelayServers(BuildContext context, Ref ref) async {
++  final servers = [...ref.read(signalingProvider).signalingServers];
++  final controller = TextEditingController(text: servers.join('\n'));
++
++  final result = await showDialog<String>(
++    context: context,
++    builder: (context) {
++      return AlertDialog(
++        title: const Text('Relay server'),
++        content: SizedBox(
++          width: 420,
++          child: TextField(
++            controller: controller,
++            maxLines: 6,
++            decoration: const InputDecoration(
++              hintText: 'wss://relay.example.com/v1/ws',
++            ),
++          ),
++        ),
++        actions: [
++          TextButton(
++            onPressed: () => Navigator.pop(context),
++            child: const Text('Cancel'),
++          ),
++          FilledButton(
++            onPressed: () => Navigator.pop(context, controller.text),
++            child: const Text('Save'),
++          ),
++        ],
++      );
++    },
++  );
++  controller.dispose();
++
++  if (result == null) {
++    return;
++  }
++
++  final nextServers = result
++      .split('\n')
++      .map((server) => server.trim())
++      .where((server) => server.isNotEmpty)
++      .toSet()
++      .toList();
++
++  await ref.read(persistenceProvider).setSignalingServers(nextServers);
++  ref.redux(signalingProvider).dispatch(SetSignalingServersAction(nextServers));
++  ref.redux(signalingProvider).dispatch(SetupSignalingConnection());
++}
 diff --git a/app/lib/provider/network/send_provider.dart b/app/lib/provider/network/send_provider.dart
 index d4adf33..4b94925 100644
 --- a/app/lib/provider/network/send_provider.dart
@@ -567,7 +678,7 @@ index d4adf33..4b94925 100644
  
    /// Sends a single file. Currently only used to retry a failed file.
 diff --git a/app/lib/provider/network/webrtc/signaling_provider.dart b/app/lib/provider/network/webrtc/signaling_provider.dart
-index 05f29ca..f872cf6 100644
+index 05f29ca..6fbb08b 100644
 --- a/app/lib/provider/network/webrtc/signaling_provider.dart
 +++ b/app/lib/provider/network/webrtc/signaling_provider.dart
 @@ -1,25 +1,24 @@
@@ -614,7 +725,25 @@ index 05f29ca..f872cf6 100644
        // ignore: discarded_futures
        global.dispatchAsync(_SetupSignalingConnection(signalingServer: signalingServer));
      }
-@@ -79,22 +83,16 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+@@ -68,6 +72,17 @@ class SetupSignalingConnection extends ReduxAction<SignalingService, SignalingSt
+   }
+ }
+ 
++class SetSignalingServersAction extends ReduxAction<SignalingService, SignalingState> {
++  final List<String> signalingServers;
++
++  SetSignalingServersAction(this.signalingServers);
++
++  @override
++  SignalingState reduce() {
++    return state.copyWith(signalingServers: signalingServers);
++  }
++}
++
+ /// Starts an endless running action.
+ class _SetupSignalingConnection extends AsyncGlobalAction {
+   final String signalingServer;
+@@ -79,22 +94,16 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
      final settings = ref.read(settingsProvider);
      final deviceInfo = ref.read(deviceInfoProvider);
  
@@ -639,7 +768,7 @@ index 05f29ca..f872cf6 100644
        onConnection: (c) {
          connection = c;
  
-@@ -151,10 +149,21 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+@@ -151,10 +160,21 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
                  offer: message.field0,
                  settings: ref.read(settingsProvider),
                  favorites: ref.read(favoritesProvider),
@@ -662,47 +791,6 @@ index 05f29ca..f872cf6 100644
              await ref.redux(provider).dispatchAsync(AcceptOfferAction());
              break;
            case WsServerMessage_Answer():
-diff --git a/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
-new file mode 100644
-index 0000000..0368495
---- /dev/null
-+++ b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
-@@ -0,0 +1,35 @@
-+import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
-+import 'package:refena_flutter/refena_flutter.dart';
-+
-+/// A live handle to a WebRTC receive session, used by pages that are not
-+/// created inside [WebRTCReceiveService] (notably [ProgressPage]).
-+class WebRTCReceiveSessionHandle {
-+  final String sessionId;
-+  final ReduxProvider<WebRTCReceiveService, WebRTCReceiveState> provider;
-+
-+  const WebRTCReceiveSessionHandle({
-+    required this.sessionId,
-+    required this.provider,
-+  });
-+}
-+
-+/// Tracks active WebRTC receive sessions by the session id from the SDP offer.
-+final webRTCReceiveSessionsProvider = NotifierProvider<WebRTCReceiveSessionsService, Map<String, WebRTCReceiveSessionHandle>>((ref) {
-+  return WebRTCReceiveSessionsService();
-+});
-+
-+class WebRTCReceiveSessionsService extends Notifier<Map<String, WebRTCReceiveSessionHandle>> {
-+  @override
-+  Map<String, WebRTCReceiveSessionHandle> init() => {};
-+
-+  void register(WebRTCReceiveSessionHandle handle) {
-+    state = {
-+      ...state,
-+      handle.sessionId: handle,
-+    };
-+  }
-+
-+  void unregister(String sessionId) {
-+    state = {...state}..remove(sessionId);
-+  }
-+}
 diff --git a/app/lib/provider/network/webrtc/webrtc_receiver.dart b/app/lib/provider/network/webrtc/webrtc_receiver.dart
 index b58ba85..93f1bd9 100644
 --- a/app/lib/provider/network/webrtc/webrtc_receiver.dart
@@ -1427,18 +1515,49 @@ index e12a995..5093270 100644
  async fn receive_nonce(receive_rx: &mut mpsc::Receiver<DataChannelMessage>) -> Result<Vec<u8>> {
      let remote_nonce = match receive_rx.recv().await {
          Some(msg) => {
+diff --git a/server/Cargo.toml b/server/Cargo.toml
+index 6c448e0..83e9cf7 100644
+--- a/server/Cargo.toml
++++ b/server/Cargo.toml
+@@ -5,7 +5,7 @@ edition = "2021"
+ 
+ [dependencies]
+ anyhow = "1.0.95"
+-axum = { version = "0.8.1", features = ["ws"] }
++axum = { version = "0.8.1", features = ["ws", "multipart"] }
+ base64 = "0.22.1"
+ futures-util = "0.3.31"
+ localsend = { path = "../packages/core" }
+diff --git a/server/Dockerfile b/server/Dockerfile
+index 9bef482..bb0b93c 100644
+--- a/server/Dockerfile
++++ b/server/Dockerfile
+@@ -18,5 +18,9 @@ FROM debian:bookworm AS runtime
+ 
+ COPY --from=builder /server-bin /server
+ 
++RUN mkdir -p /data/shares
++
++ENV SHARE_DATA_DIR=/data/shares
++
+ EXPOSE 3000
+ ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..6ab6ede 100644
+index 07b8b65..08a47cc 100644
 --- a/server/README.md
 +++ b/server/README.md
-@@ -1,3 +1,50 @@
+@@ -1,3 +1,85 @@
  # LocalSend Signaling Server
  
 -A signaling server for LocalSend. Using Rust and WebSockets.
 +LocalSend 的 WebRTC 信令与在线发现服务器，使用 Rust 和 WebSocket 实现。
 +
-+服务器只负责设备发现、在线状态广播和 SDP/ICE 信令转发；媒体文件通过 WebRTC
-+直连传输，无法直连时才由公网 STUN/TURN 兜底。
++服务器负责设备发现、在线状态广播和 SDP/ICE 信令转发；客户端之间的媒体文件
++通过 WebRTC 直连传输，无法直连时才由公网 STUN/TURN 兜底。临时网页分享中的
++文本和文件会按 TTL 短期保存在服务器指定的数据目录。
++
++服务器还提供一个不依赖客户端的临时分享页 `http://服务器IP:3000/share`，
++用于向没有安装 App 的设备临时分享文本或文件。
 +
 +## 房间模式
 +
@@ -1455,6 +1574,11 @@ index 07b8b65..6ab6ede 100644
 +| `MAX_REQUESTS_PER_IP_PER_HOUR` | `1000` | 每个来源 IP 每小时的请求上限 |
 +| `SERVER_IP` | `0.0.0.0` | 监听地址 |
 +| `SERVER_PORT` | `3000` | 监听端口 |
++| `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
++| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
++| `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
++| `MAX_SHARE_UPLOADS_PER_IP_PER_HOUR` | `100` | 每个来源 IP 每小时的临时分享上传上限 |
++| `SHARE_DATA_DIR` | `./share-data` | 临时分享文件存储目录 |
 +
 +## 部署
 +
@@ -1467,12 +1591,38 @@ index 07b8b65..6ab6ede 100644
 +  -e ROOM_MODE=ip \
 +  -e MAX_CONNECTIONS_PER_IP=20 \
 +  -e MAX_REQUESTS_PER_IP_PER_HOUR=1000 \
++  -v relaysend-share-data:/data/shares \
++  -e SHARE_DATA_DIR=/data/shares \
 +  localsend-signaling
++```
++
++也可以直接从仓库根目录使用 Docker Compose：
++
++```bash
++docker compose -f server/docker-compose.yml up -d --build
 +```
 +
 +客户端连接地址为 `ws://服务器IP:3000/v1/ws`。生产环境建议使用 Nginx 或 Caddy
 +提供 `wss://` 和 TLS，并正确透传 `X-Forwarded-For`，否则所有客户端会被反代 IP
 +分到同一来源组。
++
++## 临时分享
++
++服务器启动后，浏览器访问：
++
++```text
++http://服务器IP:3000/share
++```
++
++可以粘贴文本或选择文件，提交后生成 `/s/<id>` 链接。链接默认保留 24 小时，
++到期后服务器自动删除文本和文件。临时分享文件默认保存在 `SHARE_DATA_DIR`。
++
++生产环境部署在 Nginx 后面时，Web 页面和临时链接使用：
++
++```text
++https://relay.example.com/share
++https://relay.example.com/s/<id>
++```
 +
 +## 媒体兜底
 +
@@ -1483,40 +1633,187 @@ index 07b8b65..6ab6ede 100644
 +- TURN：`turn:公网地址:3478`，带用户名和密码
 +
 +客户端还应配置本服务器的 WebSocket 地址作为信令服务器。
+diff --git a/server/src/config/init.rs b/server/src/config/init.rs
+index 9d51d6e..d52d559 100644
+--- a/server/src/config/init.rs
++++ b/server/src/config/init.rs
+@@ -12,9 +12,14 @@ pub async fn init() -> AppState {
+     let app_state = AppState::new();
+ 
+     // Setup scheduler
+-    scheduler::configure_scheduling(app_state.request_count_map.clone())
+-        .await
+-        .expect("Error configuring scheduler");
++    scheduler::configure_scheduling(
++        app_state.request_count_map.clone(),
++        app_state.share_request_count_map.clone(),
++    )
++    .await
++    .expect("Error configuring scheduler");
++
++    crate::controller::share_controller::spawn_share_cleanup(app_state.share_store.clone());
+ 
+     app_state
+ }
+diff --git a/server/src/config/scheduler.rs b/server/src/config/scheduler.rs
+index a446711..2e6f56a 100644
+--- a/server/src/config/scheduler.rs
++++ b/server/src/config/scheduler.rs
+@@ -1,18 +1,21 @@
+ use tokio_cron_scheduler::{Job, JobScheduler};
+ 
+-use crate::config::state::IpRequestCountMap;
++use crate::config::state::{IpRequestCountMap, ShareRequestCountMap};
+ 
+ pub async fn configure_scheduling(
+     ip_request_count_map: IpRequestCountMap,
++    share_request_count_map: ShareRequestCountMap,
+ ) -> Result<(), Box<dyn std::error::Error>> {
+     let scheduler = JobScheduler::new().await?;
+ 
+     scheduler
+         .add(Job::new_async("0 0 * * * *", move |_uuid, _l| {
+             Box::pin({
+-                let value = ip_request_count_map.clone();
++                let ip_counts = ip_request_count_map.clone();
++                let share_counts = share_request_count_map.clone();
+                 async move {
+-                    value.lock().await.clear();
++                    ip_counts.lock().await.clear();
++                    share_counts.lock().await.clear();
+                 }
+             })
+         })?)
 diff --git a/server/src/config/state.rs b/server/src/config/state.rs
-index 4de801b..ee8cfe4 100644
+index 4de801b..84c2b5b 100644
 --- a/server/src/config/state.rs
 +++ b/server/src/config/state.rs
-@@ -14,6 +14,9 @@ pub struct ClientState {
+@@ -1,6 +1,8 @@
+ use localsend::webrtc::signaling::{ClientInfoWithoutId, WsServerMessage};
+ use std::collections::HashMap;
++use std::path::PathBuf;
+ use std::sync::Arc;
++use std::time::{Duration, SystemTime};
+ use tokio::sync::{mpsc, Mutex};
+ use uuid::Uuid;
+ 
+@@ -14,6 +16,81 @@ pub struct ClientState {
  
  pub type IpRequestCountMap = Arc<Mutex<HashMap<String, u32>>>;
  
 +/// IP group -> number of active WebSocket connections.
 +pub type IpConnectionCountMap = Arc<Mutex<HashMap<String, u32>>>;
 +
++/// IP group -> number of temporary share uploads in the current hour.
++pub type ShareRequestCountMap = Arc<Mutex<HashMap<String, u32>>>;
++
++/// In-memory index for temporary browser shares. File payloads live on disk.
++#[derive(Clone)]
++pub struct ShareStore {
++    pub shares: Arc<Mutex<HashMap<Uuid, Share>>>,
++    pub data_dir: PathBuf,
++}
++
++impl ShareStore {
++    pub fn new() -> Self {
++        let data_dir =
++            std::env::var("SHARE_DATA_DIR").unwrap_or_else(|_| "./share-data".to_string());
++        std::fs::create_dir_all(&data_dir).expect("failed to create share data directory");
++        Self {
++            shares: Arc::new(Mutex::new(HashMap::new())),
++            data_dir: PathBuf::from(data_dir),
++        }
++    }
++
++    pub fn share_dir(&self, id: Uuid) -> PathBuf {
++        self.data_dir.join(id.to_string())
++    }
++
++    pub async fn insert(&self, id: Uuid, share: Share) {
++        self.shares.lock().await.insert(id, share);
++    }
++
++    pub async fn get(&self, id: &Uuid) -> Option<Share> {
++        self.shares.lock().await.get(id).cloned()
++    }
++
++    pub async fn remove(&self, id: &Uuid) {
++        self.shares.lock().await.remove(id);
++        let _ = tokio::fs::remove_dir_all(self.share_dir(*id)).await;
++    }
++
++    pub async fn cleanup_expired(&self, ttl: Duration) -> usize {
++        let expired_ids: Vec<Uuid> = {
++            let shares = self.shares.lock().await;
++            shares
++                .iter()
++                .filter(|(_, share)| share.created_at.elapsed().unwrap_or_default() >= ttl)
++                .map(|(id, _)| *id)
++                .collect()
++        };
++
++        let removed_count = expired_ids.len();
++        for id in expired_ids {
++            self.remove(&id).await;
++        }
++
++        removed_count
++    }
++}
++
++#[derive(Clone)]
++pub struct Share {
++    pub created_at: SystemTime,
++    pub text: Option<String>,
++    pub files: Vec<SharedFile>,
++}
++
++#[derive(Clone)]
++pub struct SharedFile {
++    pub index: usize,
++    pub file_name: String,
++    pub size: u64,
++    pub path: PathBuf,
++}
++
  #[derive(Clone)]
  pub struct AppState {
      /// Map of peer IDs to WebSocket message senders.
-@@ -21,6 +24,9 @@ pub struct AppState {
+@@ -21,6 +98,15 @@ pub struct AppState {
  
      /// Map of IP addresses to the number of requests.
      pub request_count_map: IpRequestCountMap,
 +
 +    /// Map of IP addresses to the number of active connections.
 +    pub connection_count_map: IpConnectionCountMap,
++
++    /// Map of IP addresses to the number of temporary share uploads.
++    pub share_request_count_map: ShareRequestCountMap,
++
++    /// Temporary browser text/file shares.
++    pub share_store: ShareStore,
  }
  
  impl AppState {
-@@ -28,6 +34,7 @@ impl AppState {
+@@ -28,6 +114,9 @@ impl AppState {
          Self {
              tx_map: Arc::new(Mutex::new(HashMap::new())),
              request_count_map: Arc::new(Mutex::new(HashMap::new())),
 +            connection_count_map: Arc::new(Mutex::new(HashMap::new())),
++            share_request_count_map: Arc::new(Mutex::new(HashMap::new())),
++            share_store: ShareStore::new(),
          }
      }
  }
+diff --git a/server/src/controller/mod.rs b/server/src/controller/mod.rs
+index 60da579..8c65e47 100644
+--- a/server/src/controller/mod.rs
++++ b/server/src/controller/mod.rs
+@@ -1 +1,2 @@
++pub(crate) mod share_controller;
+ pub(crate) mod ws_controller;
 diff --git a/server/src/controller/ws_controller.rs b/server/src/controller/ws_controller.rs
-index 2a817f8..001783b 100644
+index 2a817f8..788f16e 100644
 --- a/server/src/controller/ws_controller.rs
 +++ b/server/src/controller/ws_controller.rs
 @@ -1,5 +1,5 @@
@@ -1526,28 +1823,48 @@ index 2a817f8..001783b 100644
  use crate::util;
  use crate::util::ip::get_ip_group;
  use axum::body::Body;
-@@ -35,6 +35,10 @@ static MAX_REQUESTS: LazyLock<u32> = LazyLock::new(|| {
+@@ -15,8 +15,7 @@ use localsend::webrtc::signaling::{
+ };
+ use serde::Deserialize;
+ use std::collections::HashMap;
+-use std::net::{IpAddr, SocketAddr};
+-use std::str::FromStr;
++use std::net::SocketAddr;
+ use std::sync::LazyLock;
+ use tokio::sync::mpsc;
+ use uuid::Uuid;
+@@ -35,6 +34,9 @@ static MAX_REQUESTS: LazyLock<u32> = LazyLock::new(|| {
          .unwrap()
  });
  
-+static ROOM_MODE: LazyLock<String> = LazyLock::new(|| {
-+    std::env::var("ROOM_MODE").unwrap_or_else(|_| "global".to_string())
-+});
++static ROOM_MODE: LazyLock<String> =
++    LazyLock::new(|| std::env::var("ROOM_MODE").unwrap_or_else(|_| "global".to_string()));
 +
  #[derive(Deserialize)]
  pub struct WsQuery {
      /// `PeerRegisterDto` encoded as base64.
-@@ -73,12 +77,21 @@ pub async fn ws_handler(
-         raw_forwarded.unwrap_or(addr.ip())
+@@ -61,24 +63,23 @@ pub async fn ws_handler(
+         ClientInfo::from(register_dto.clone(), Uuid::new_v4())
      };
  
+-    let ip = {
+-        // Prefer the forwarded IP if available.
+-        let raw_forwarded = headers
+-            .get("x-forwarded-for")
+-            .and_then(|v| v.to_str().ok())
+-            .and_then(|v| v.split(',').last()) // Get the last component
+-            .map(|v| v.trim().to_string())
+-            .and_then(|v| IpAddr::from_str(&v).ok());
++    let ip = util::ip::get_client_ip(&headers, addr.ip());
+ 
+-        raw_forwarded.unwrap_or(addr.ip())
 +    let ip_group = get_ip_group(ip);
 +    let room_key = if ROOM_MODE.as_str() == "ip" {
 +        ip_group.clone()
 +    } else {
 +        "global".to_string()
-+    };
-+
+     };
+ 
      Ok(ws.on_upgrade(move |socket| {
          handle_socket(
              state.tx_map,
@@ -1560,7 +1877,7 @@ index 2a817f8..001783b 100644
              peer_info,
          )
      }))
-@@ -88,7 +101,9 @@ pub async fn ws_handler(
+@@ -88,7 +89,9 @@ pub async fn ws_handler(
  async fn handle_socket(
      tx_map: TxMap,
      request_count_map: IpRequestCountMap,
@@ -1570,7 +1887,7 @@ index 2a817f8..001783b 100644
      ip_group: String,
      peer: ClientInfo,
  ) {
-@@ -105,22 +120,27 @@ async fn handle_socket(
+@@ -105,22 +108,27 @@ async fn handle_socket(
          // Used to break out of the lock as early as possible.
          let mut limit_reached = false;
  
@@ -1610,7 +1927,7 @@ index 2a817f8..001783b 100644
  
              peers_tx = tx_local_map.values().map(|p| p.tx.clone()).collect();
  
-@@ -139,7 +159,7 @@ async fn handle_socket(
+@@ -139,7 +147,7 @@ async fn handle_socket(
  
              let debug_active_connections = tx_map.len();
              let debug_total_active_connections: usize = tx_map.values().map(|m| m.len()).sum();
@@ -1619,7 +1936,7 @@ index 2a817f8..001783b 100644
          }
  
          if limit_reached {
-@@ -178,6 +198,7 @@ async fn handle_socket(
+@@ -178,6 +186,7 @@ async fn handle_socket(
  
      let tx_map_clone = tx_map.clone();
      let ip_group_clone = ip_group.clone();
@@ -1627,7 +1944,7 @@ index 2a817f8..001783b 100644
      let mut recv_task = tokio::spawn(async move {
          while let Some(Ok(msg)) = receiver.next().await {
              if let Message::Text(text) = msg {
-@@ -198,7 +219,7 @@ async fn handle_socket(
+@@ -198,7 +207,7 @@ async fn handle_socket(
                          WsClientMessage::Update { info } => {
                              send_update_to_other_peers_with_lock(
                                  &tx_map_clone,
@@ -1636,7 +1953,7 @@ index 2a817f8..001783b 100644
                                  peer_id,
                                  info,
                              )
-@@ -207,7 +228,7 @@ async fn handle_socket(
+@@ -207,7 +216,7 @@ async fn handle_socket(
                          WsClientMessage::Offer(sdp) => {
                              send_to_peer_with_lock(
                                  &tx_map_clone,
@@ -1645,7 +1962,7 @@ index 2a817f8..001783b 100644
                                  peer.clone(),
                                  WsClientSdpMessageWrapper::Offer(sdp),
                              )
-@@ -216,7 +237,7 @@ async fn handle_socket(
+@@ -216,7 +225,7 @@ async fn handle_socket(
                          WsClientMessage::Answer(sdp) => {
                              send_to_peer_with_lock(
                                  &tx_map_clone,
@@ -1654,7 +1971,7 @@ index 2a817f8..001783b 100644
                                  peer.clone(),
                                  WsClientSdpMessageWrapper::Answer(sdp),
                              )
-@@ -250,11 +271,11 @@ async fn handle_socket(
+@@ -250,11 +259,11 @@ async fn handle_socket(
  
      {
          let mut tx_map = tx_map.lock().await;
@@ -1668,7 +1985,7 @@ index 2a817f8..001783b 100644
                      0
                  } else {
                      remaining_tx = tx_local_map.values().map(|p| p.tx.clone()).collect();
-@@ -267,6 +288,18 @@ async fn handle_socket(
+@@ -267,6 +276,18 @@ async fn handle_socket(
          tracing::info!("Disconnect: {peer_id} (active: {final_active_connections})");
      }
  
@@ -1687,7 +2004,7 @@ index 2a817f8..001783b 100644
      for tx in remaining_tx {
          let _ = tx.send(WsServerMessage::Left { peer_id }).await;
      }
-@@ -274,16 +307,16 @@ async fn handle_socket(
+@@ -274,16 +295,16 @@ async fn handle_socket(
  
  async fn send_update_to_other_peers_with_lock(
      tx_map: &TxMap,
@@ -1707,7 +2024,7 @@ index 2a817f8..001783b 100644
              if let Some(peer_state) = tx_local_map.get_mut(&peer_id) {
                  peer_state.client = info;
  
-@@ -312,7 +345,7 @@ enum WsClientSdpMessageWrapper {
+@@ -312,7 +333,7 @@ enum WsClientSdpMessageWrapper {
  
  async fn send_to_peer_with_lock(
      tx_map: &TxMap,
@@ -1716,7 +2033,7 @@ index 2a817f8..001783b 100644
      origin_peer: ClientInfo,
      message: WsClientSdpMessageWrapper,
  ) {
-@@ -324,7 +357,7 @@ async fn send_to_peer_with_lock(
+@@ -324,7 +345,7 @@ async fn send_to_peer_with_lock(
      let mut target_peer_tx: Option<mpsc::Sender<WsServerMessage>> = None;
      {
          let tx_map = tx_map.lock().await;
@@ -1725,3 +2042,510 @@ index 2a817f8..001783b 100644
              if let Some(peer_state) = tx_local_map.get(&target) {
                  target_peer_tx = Some(peer_state.tx.clone());
              }
+diff --git a/server/src/main.rs b/server/src/main.rs
+index 3efb369..04ab466 100644
+--- a/server/src/main.rs
++++ b/server/src/main.rs
+@@ -1,4 +1,6 @@
++use crate::controller::share_controller;
+ use crate::controller::ws_controller;
++use axum::extract::DefaultBodyLimit;
+ use axum::routing::get;
+ use axum::Router;
+ use std::net::SocketAddr;
+@@ -29,5 +31,16 @@ async fn main() {
+ #[rustfmt::skip]
+ fn configure_routes() -> Router<config::state::AppState> {
+     Router::new()
++        .route("/", get(share_controller::root))
++        .route(
++            "/share",
++            get(share_controller::share_page).post(share_controller::create_share),
++        )
++        .route("/s/{id}", get(share_controller::view_share))
++        .route(
++            "/s/{id}/download/{index}",
++            get(share_controller::download_share),
++        )
+         .route("/v1/ws", get(ws_controller::ws_handler))
++        .layer(DefaultBodyLimit::max(*share_controller::MAX_SHARE_BYTES))
+ }
+diff --git a/server/src/util/ip.rs b/server/src/util/ip.rs
+index 72e2320..9e5796b 100644
+--- a/server/src/util/ip.rs
++++ b/server/src/util/ip.rs
+@@ -1,4 +1,16 @@
++use axum::http::HeaderMap;
+ use std::net::IpAddr;
++use std::str::FromStr;
++
++pub(crate) fn get_client_ip(headers: &HeaderMap, fallback: IpAddr) -> IpAddr {
++    headers
++        .get("x-forwarded-for")
++        .and_then(|value| value.to_str().ok())
++        .and_then(|value| value.split(',').last())
++        .map(|value| value.trim())
++        .and_then(|value| IpAddr::from_str(value).ok())
++        .unwrap_or(fallback)
++}
+ 
+ pub(crate) fn get_ip_group(ip: IpAddr) -> String {
+     match ip {
+diff --git a/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
+new file mode 100644
+index 0000000..0368495
+--- /dev/null
++++ b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
+@@ -0,0 +1,35 @@
++import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
++import 'package:refena_flutter/refena_flutter.dart';
++
++/// A live handle to a WebRTC receive session, used by pages that are not
++/// created inside [WebRTCReceiveService] (notably [ProgressPage]).
++class WebRTCReceiveSessionHandle {
++  final String sessionId;
++  final ReduxProvider<WebRTCReceiveService, WebRTCReceiveState> provider;
++
++  const WebRTCReceiveSessionHandle({
++    required this.sessionId,
++    required this.provider,
++  });
++}
++
++/// Tracks active WebRTC receive sessions by the session id from the SDP offer.
++final webRTCReceiveSessionsProvider = NotifierProvider<WebRTCReceiveSessionsService, Map<String, WebRTCReceiveSessionHandle>>((ref) {
++  return WebRTCReceiveSessionsService();
++});
++
++class WebRTCReceiveSessionsService extends Notifier<Map<String, WebRTCReceiveSessionHandle>> {
++  @override
++  Map<String, WebRTCReceiveSessionHandle> init() => {};
++
++  void register(WebRTCReceiveSessionHandle handle) {
++    state = {
++      ...state,
++      handle.sessionId: handle,
++    };
++  }
++
++  void unregister(String sessionId) {
++    state = {...state}..remove(sessionId);
++  }
++}
+diff --git a/server/docker-compose.yml b/server/docker-compose.yml
+new file mode 100644
+index 0000000..30e55e0
+--- /dev/null
++++ b/server/docker-compose.yml
+@@ -0,0 +1,24 @@
++services:
++  relaysend-server:
++    build:
++      context: ..
++      dockerfile: server/Dockerfile
++    image: relaysend-server:local
++    container_name: relaysend-server
++    restart: unless-stopped
++    ports:
++      - "3000:3000"
++    environment:
++      ROOM_MODE: global
++      MAX_CONNECTIONS_PER_IP: "20"
++      MAX_REQUESTS_PER_IP_PER_HOUR: "1000"
++      SHARE_TTL_HOURS: "24"
++      MAX_SHARE_SIZE_MB: "100"
++      MAX_SHARE_FILES: "20"
++      MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: "100"
++      SHARE_DATA_DIR: /data/shares
++    volumes:
++      - relaysend-share-data:/data/shares
++
++volumes:
++  relaysend-share-data:
+diff --git a/server/src/controller/share_controller.rs b/server/src/controller/share_controller.rs
+new file mode 100644
+index 0000000..d96f592
+--- /dev/null
++++ b/server/src/controller/share_controller.rs
+@@ -0,0 +1,381 @@
++use crate::config::error::AppError;
++use crate::config::state::{AppState, Share, ShareStore, SharedFile};
++use crate::util::ip::get_client_ip;
++use axum::extract::{ConnectInfo, Multipart, Path, State};
++use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
++use axum::response::{Html, IntoResponse, Redirect, Response};
++use std::fmt::Write as _;
++use std::net::{IpAddr, SocketAddr};
++use std::sync::LazyLock;
++use std::time::{Duration, SystemTime};
++use tokio::time::sleep;
++use uuid::Uuid;
++
++pub(crate) static MAX_SHARE_BYTES: LazyLock<usize> = LazyLock::new(|| {
++    std::env::var("MAX_SHARE_SIZE_MB")
++        .ok()
++        .and_then(|value| value.parse::<usize>().ok())
++        .unwrap_or(100)
++        .saturating_mul(1024 * 1024)
++});
++
++static MAX_SHARE_FILES: LazyLock<usize> = LazyLock::new(|| {
++    std::env::var("MAX_SHARE_FILES")
++        .ok()
++        .and_then(|value| value.parse::<usize>().ok())
++        .unwrap_or(20)
++});
++
++static MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: LazyLock<u32> = LazyLock::new(|| {
++    std::env::var("MAX_SHARE_UPLOADS_PER_IP_PER_HOUR")
++        .ok()
++        .and_then(|value| value.parse::<u32>().ok())
++        .unwrap_or(100)
++});
++
++static SHARE_TTL_HOURS: LazyLock<u64> = LazyLock::new(|| {
++    std::env::var("SHARE_TTL_HOURS")
++        .ok()
++        .and_then(|value| value.parse::<u64>().ok())
++        .unwrap_or(24)
++});
++
++pub async fn root() -> Redirect {
++    Redirect::to("/share")
++}
++
++pub async fn share_page() -> Html<String> {
++    Html(share_page_html())
++}
++
++pub async fn create_share(
++    State(state): State<AppState>,
++    ConnectInfo(addr): ConnectInfo<SocketAddr>,
++    headers: HeaderMap,
++    mut multipart: Multipart,
++) -> Result<Redirect, AppError> {
++    let ip: IpAddr = get_client_ip(&headers, addr.ip());
++    let ip_group = crate::util::ip::get_ip_group(ip);
++    {
++        let mut counts = state.share_request_count_map.lock().await;
++        let count = counts.entry(ip_group.clone()).or_default();
++        *count += 1;
++        if *count > *MAX_SHARE_UPLOADS_PER_IP_PER_HOUR {
++            return Err(share_error(
++                StatusCode::TOO_MANY_REQUESTS,
++                "Too many temporary shares from this IP",
++            ));
++        }
++    }
++
++    let share_id = Uuid::new_v4();
++    let share_dir = state.share_store.share_dir(share_id);
++    tokio::fs::create_dir_all(&share_dir).await?;
++
++    let mut text = None;
++    let mut files = Vec::new();
++
++    while let Some(mut field) = multipart
++        .next_field()
++        .await
++        .map_err(|error| share_error(StatusCode::BAD_REQUEST, error.to_string()))?
++    {
++        match field.name().unwrap_or("") {
++            "text" => {
++                let value = field
++                    .text()
++                    .await
++                    .map_err(|error| share_error(StatusCode::BAD_REQUEST, error.to_string()))?;
++                let value = value.trim().to_owned();
++                if !value.is_empty() {
++                    text = Some(value);
++                }
++            }
++            "files" => {
++                if files.len() >= *MAX_SHARE_FILES {
++                    return Err(share_error(
++                        StatusCode::PAYLOAD_TOO_LARGE,
++                        "Too many files in one share",
++                    ));
++                }
++
++                let file_name = field.file_name().unwrap_or("file").to_owned();
++                let mut bytes = Vec::new();
++                let mut size = 0usize;
++
++                while let Some(chunk) = field
++                    .chunk()
++                    .await
++                    .map_err(|error| share_error(StatusCode::BAD_REQUEST, error.to_string()))?
++                {
++                    size += chunk.len();
++                    if size > *MAX_SHARE_BYTES {
++                        return Err(share_error(
++                            StatusCode::PAYLOAD_TOO_LARGE,
++                            "Share is larger than the configured limit",
++                        ));
++                    }
++                    bytes.extend_from_slice(&chunk);
++                }
++
++                if size == 0 {
++                    continue;
++                }
++
++                let index = files.len();
++                let path = share_dir.join(format!("{index}.bin"));
++                tokio::fs::write(&path, &bytes).await?;
++                files.push(SharedFile {
++                    index,
++                    file_name,
++                    size: size as u64,
++                    path,
++                });
++            }
++            _ => {}
++        }
++    }
++
++    if text.is_none() && files.is_empty() {
++        let _ = tokio::fs::remove_dir_all(share_dir).await;
++        return Err(share_error(
++            StatusCode::BAD_REQUEST,
++            "Add text or at least one file",
++        ));
++    }
++
++    state
++        .share_store
++        .insert(
++            share_id,
++            Share {
++                created_at: SystemTime::now(),
++                text,
++                files,
++            },
++        )
++        .await;
++
++    Ok(Redirect::to(&format!("/s/{share_id}")))
++}
++
++pub async fn view_share(
++    State(state): State<AppState>,
++    Path(id): Path<Uuid>,
++) -> Result<Html<String>, AppError> {
++    let share =
++        state.share_store.get(&id).await.ok_or_else(|| {
++            share_error(StatusCode::NOT_FOUND, "Share not found or already expired")
++        })?;
++    Ok(Html(view_share_html(id, share)))
++}
++
++pub async fn download_share(
++    State(state): State<AppState>,
++    Path((id, index)): Path<(Uuid, usize)>,
++) -> Result<Response, AppError> {
++    let share =
++        state.share_store.get(&id).await.ok_or_else(|| {
++            share_error(StatusCode::NOT_FOUND, "Share not found or already expired")
++        })?;
++    let file = share
++        .files
++        .get(index)
++        .ok_or_else(|| share_error(StatusCode::NOT_FOUND, "File not found"))?;
++    let bytes = tokio::fs::read(&file.path).await?;
++    let encoded_name = percent_encode(&file.file_name);
++    let content_disposition =
++        format!("attachment; filename=\"download\"; filename*=UTF-8''{encoded_name}");
++
++    let mut headers = HeaderMap::new();
++    headers.insert(
++        header::CONTENT_TYPE,
++        HeaderValue::from_static("application/octet-stream"),
++    );
++    headers.insert(
++        header::CONTENT_DISPOSITION,
++        HeaderValue::from_str(&content_disposition).expect("content disposition is ASCII"),
++    );
++    headers.insert(
++        header::CACHE_CONTROL,
++        HeaderValue::from_static("private, no-store"),
++    );
++
++    Ok((headers, bytes).into_response())
++}
++
++pub fn spawn_share_cleanup(store: ShareStore) {
++    tokio::spawn(async move {
++        let ttl = Duration::from_secs(*SHARE_TTL_HOURS * 3600);
++        loop {
++            sleep(Duration::from_secs(60)).await;
++            let removed = store.cleanup_expired(ttl).await;
++            if removed > 0 {
++                tracing::info!("Removed {removed} expired temporary shares");
++            }
++        }
++    });
++}
++
++fn share_error(status: StatusCode, message: impl Into<String>) -> AppError {
++    AppError::status(status, Some(message.into()))
++}
++
++fn share_page_html() -> String {
++    let max_mb = *MAX_SHARE_BYTES / (1024 * 1024);
++    format!(
++        r#"<!doctype html>
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <title>RelaySend Temporary Share</title>
++  <style>
++    :root {{
++      color-scheme: light dark;
++      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
++      line-height: 1.5;
++    }}
++    body {{ max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }}
++    h1 {{ margin-top: 0; }}
++    form {{ display: grid; gap: 14px; }}
++    textarea, input[type="file"], button {{ width: 100%; box-sizing: border-box; }}
++    textarea {{ min-height: 140px; padding: 10px; border-radius: 8px; }}
++    button {{ padding: 10px 14px; font-weight: 600; border-radius: 8px; cursor: pointer; }}
++    .meta {{ color: #777; font-size: 14px; }}
++    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 12px; border-radius: 8px; }}
++    a {{ color: #0b6bcb; }}
++  </style>
++</head>
++<body>
++  <main>
++    <h1>RelaySend Temporary Share</h1>
++    <p>Share text or files without installing the app. Links expire after {ttl} hours.</p>
++    <form action="/share" method="post" enctype="multipart/form-data">
++      <div>
++        <label for="text">Text</label>
++        <textarea id="text" name="text" placeholder="Paste or type text here"></textarea>
++      </div>
++      <div>
++        <label for="files">Files</label>
++        <input id="files" name="files" type="file" multiple>
++      </div>
++      <p class="meta">Maximum {max_mb} MB per share, {max_files} files. Text and files are deleted automatically.</p>
++      <button type="submit">Create share link</button>
++    </form>
++  </main>
++</body>
++</html>
++"#,
++        ttl = *SHARE_TTL_HOURS,
++        max_mb = max_mb,
++        max_files = *MAX_SHARE_FILES,
++    )
++}
++
++fn view_share_html(id: Uuid, share: Share) -> String {
++    let ttl = Duration::from_secs(*SHARE_TTL_HOURS * 3600);
++    let elapsed = share.created_at.elapsed().unwrap_or_default();
++    let remaining = ttl.saturating_sub(elapsed);
++    let remaining_hours = remaining.as_secs() / 3600;
++    let remaining_minutes = (remaining.as_secs() % 3600) / 60;
++
++    let text_html = share.text.as_deref().map_or_else(String::new, |text| {
++        format!(
++            "<section><h2>Text</h2><pre>{}</pre></section>",
++            html_escape(text)
++        )
++    });
++
++    let mut files_html = String::new();
++    if !share.files.is_empty() {
++        files_html.push_str("<section><h2>Files</h2><ul>");
++        for file in &share.files {
++            let _ = write!(
++                files_html,
++                "<li><a href=\"/s/{id}/download/{}\">{}</a> <span class=\"meta\">{}</span></li>",
++                file.index,
++                html_escape(&file.file_name),
++                human_size(file.size)
++            );
++        }
++        files_html.push_str("</ul></section>");
++    }
++
++    format!(
++        r#"<!doctype html>
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <title>RelaySend Share</title>
++  <style>
++    :root {{
++      color-scheme: light dark;
++      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
++      line-height: 1.5;
++    }}
++    body {{ max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }}
++    .meta {{ color: #777; font-size: 14px; }}
++    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 12px; border-radius: 8px; }}
++    button {{ padding: 8px 12px; border-radius: 8px; cursor: pointer; }}
++    a {{ color: #0b6bcb; }}
++  </style>
++</head>
++<body>
++  <main>
++    <h1>RelaySend Share</h1>
++    <p class="meta">Link expires in {remaining_hours}h {remaining_minutes}m.</p>
++    <button id="copy" type="button">Copy link</button>
++    {text_html}
++    {files_html}
++  </main>
++  <script>
++    document.getElementById('copy').addEventListener('click', () => {{
++      navigator.clipboard.writeText(location.href).then(() => {{
++        document.getElementById('copy').textContent = 'Copied';
++      }});
++    }});
++  </script>
++</body>
++</html>
++"#,
++        remaining_hours = remaining_hours,
++        remaining_minutes = remaining_minutes,
++        text_html = text_html,
++        files_html = files_html,
++    )
++}
++
++fn html_escape(value: &str) -> String {
++    value
++        .replace('&', "&amp;")
++        .replace('<', "&lt;")
++        .replace('>', "&gt;")
++        .replace('"', "&quot;")
++        .replace('\'', "&#39;")
++}
++
++fn percent_encode(value: &str) -> String {
++    let mut encoded = String::new();
++    for byte in value.bytes() {
++        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
++            encoded.push(byte as char);
++        } else {
++            let _ = write!(encoded, "%{byte:02X}");
++        }
++    }
++    encoded
++}
++
++fn human_size(bytes: u64) -> String {
++    if bytes >= 1024 * 1024 * 1024 {
++        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
++    } else if bytes >= 1024 * 1024 {
++        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
++    } else if bytes >= 1024 {
++        format!("{:.1} KB", bytes as f64 / 1024.0)
++    } else {
++        format!("{bytes} B")
++    }
++}

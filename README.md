@@ -9,7 +9,10 @@ WebRTC 信令服务器下互相发现和传输。
 - 公网中继兜底：跨网络无法直连时，通过 STUN/TURN 继续完成传输。
 - 设备在线状态：客户端连接信令服务器后，其他设备可以看到在线设备列表。
 - 剪切板读取：Android 客户端可以在应用内粘贴当前剪切板内容并发送。
-- 轻量服务器：Rust 编写的 WebSocket 信令服务器，不承担文件转发，适合 VPS 部署。
+- 临时网页分享：服务端内置 `/share` 页面，浏览器可直接分享文本或文件，
+  无需安装客户端。
+- 轻量服务器：Rust 编写的 WebSocket 信令服务器，客户端间传输不经过服务器；
+  临时网页分享文件会短期保存到服务器并自动清理。
 
 ## 产物说明
 
@@ -41,13 +44,104 @@ MAX_CONNECTIONS_PER_IP=20 \
 如果客户端需要跨 NAT 传输，还需要配置公网 TURN 服务，并在客户端 ICE server
 中加入 STUN/TURN 地址。
 
+### Docker 部署
+
+在已应用 `relay.patch` 的 LocalSend 仓库根目录构建镜像并启动：
+
+```bash
+docker build -f server/Dockerfile -t relaysend-server .
+docker run -d --name relaysend-server \
+  -p 3000:3000 \
+  -e ROOM_MODE=global \
+  -e MAX_CONNECTIONS_PER_IP=20 \
+  -e MAX_REQUESTS_PER_IP_PER_HOUR=1000 \
+  -v relaysend-share-data:/data/shares \
+  -e SHARE_DATA_DIR=/data/shares \
+  relaysend-server
+```
+
+也可以使用 Docker Compose：
+
+```bash
+docker compose -f server/docker-compose.yml up -d --build
+```
+
+可选环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ROOM_MODE` | `global` | `ip` 按来源 IP 分组，`global` 使用同一个大厅 |
+| `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
+| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
+| `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
+| `SHARE_DATA_DIR` | `./share-data` | 临时分享文件存储目录 |
+
+### Nginx 反向代理示例
+
+假设域名是 `relay.example.com`，本地 RelaySend 服务监听 `127.0.0.1:3000`。
+建议只让代理端口对外，不要直接暴露 3000 端口。
+
+```nginx
+server {
+    listen 80;
+    server_name relay.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name relay.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/relay.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/relay.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+配置完成后，客户端地址填：
+
+```text
+wss://relay.example.com/v1/ws
+```
+
+## 临时网页分享
+
+不需要安装 RelaySend 的设备可以打开：
+
+```text
+http://服务器IP:3000/share
+```
+
+粘贴文本或选择文件后提交，会生成 `/s/<id>` 链接。临时链接默认保留 24 小时，
+服务端会自动清理，文件不会永久保存。
+
+使用 HTTPS 域名时，网页分享地址为：
+
+```text
+https://relay.example.com/share
+```
+
 ## Android 安装
 
-安装 APK 后，在设置中填写信令服务器地址，例如：
+安装 APK 后，在“设置 -> 网络 -> Relay server”中填写信令服务器地址，例如：
 
 ```text
 ws://123.45.67.89:3000/v1/ws
 ```
+
+Windows 客户端同样在“设置 -> 网络 -> Relay server”中配置。
 
 设备需要和服务器保持 WebSocket 连接才能显示在线状态和参与信令交换。
 
