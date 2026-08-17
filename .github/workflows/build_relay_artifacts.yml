@@ -1,0 +1,223 @@
+name: Build relay artifacts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+  LOCAL_SEND_REF: "af3aad33c965defc39ecff8d9a4396a851ce3cc1"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone LocalSend base
+        run: |
+          git init localsend
+          git -C localsend remote add origin https://github.com/LocalSend/LocalSend.git
+          git -C localsend fetch --depth 1 origin "$LOCAL_SEND_REF"
+          git -C localsend checkout FETCH_HEAD
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^version: \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' localsend/app/pubspec.yaml)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone LocalSend base
+        run: |
+          git init localsend
+          git -C localsend remote add origin https://github.com/LocalSend/LocalSend.git
+          git -C localsend fetch --depth 1 origin "$LOCAL_SEND_REF"
+          git -C localsend checkout FETCH_HEAD
+
+      - name: Apply relay patch
+        shell: bash
+        run: |
+          git -C localsend apply --check ../relay.patch
+          git -C localsend apply ../relay.patch
+
+      - name: Remove proprietary dependencies
+        working-directory: localsend
+        run: sh support/scripts/remove_proprietary_dependencies.sh
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Analyze
+        working-directory: localsend/app
+        run: flutter analyze
+
+      - name: Dependencies
+        working-directory: localsend/app
+        run: flutter pub get
+
+      - name: Create test signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore /tmp/release.jks \
+            -alias localsend \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass localsend \
+            -keypass localsend \
+            -dname "CN=LocalSend Relay, OU=Relay, O=Relay, L=Internet, ST=Internet, C=CN"
+          printf 'storePassword=localsend\nkeyPassword=localsend\nkeyAlias=localsend\nstoreFile=/tmp/release.jks\n' > localsend/app/android/key.properties
+
+      - name: Build APK
+        working-directory: localsend/app
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: apk
+          path: localsend/app/build/app/outputs/flutter-apk/*-release.apk
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Fix long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/checkout@v6
+
+      - name: Clone LocalSend base
+        shell: pwsh
+        run: |
+          git init localsend
+          git -C localsend remote add origin https://github.com/LocalSend/LocalSend.git
+          git -C localsend fetch --depth 1 origin "$env:LOCAL_SEND_REF"
+          git -C localsend checkout FETCH_HEAD
+
+      - name: Apply relay patch
+        shell: bash
+        run: |
+          git -C localsend apply --check ../relay.patch
+          git -C localsend apply ../relay.patch
+
+      - name: Remove proprietary dependencies
+        working-directory: localsend
+        run: bash support/scripts/remove_proprietary_dependencies.sh
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build MSIX helper
+        working-directory: localsend
+        run: |
+          $makepri = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\makepri.exe' | Select-Object -Last 1
+          & $makepri.FullName new /pr support\build\msix\content /cf support\build\msix\priconfig.xml /mn support\build\msix\content\AppxManifest.xml /of support\build\msix\content\resources.pri /o
+          & 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\makeappx.exe' pack /o /d support\build\msix\content /nv /p app\windows\localsend_msix_helper.msix
+
+      - name: Dependencies
+        working-directory: localsend/app
+        run: flutter pub get
+
+      - name: Build Windows
+        working-directory: localsend/app
+        run: flutter build windows
+
+      - name: Prepare portable bundle
+        working-directory: localsend/app
+        run: |
+          echo {} > build/windows/x64/runner/Release/settings.json
+          Copy-Item ../support/build/windows/x64/msvcp140.dll build/windows/x64/runner/Release/
+          Copy-Item ../support/build/windows/x64/vcruntime140.dll build/windows/x64/runner/Release/
+          Copy-Item ../support/build/windows/x64/vcruntime140_1.dll build/windows/x64/runner/Release/
+          Remove-Item build/windows/x64/runner/Release/localsend_msix_helper.msix
+          Remove-Item build/windows/x64/runner/Release/install_msix_helper.ps1
+          Remove-Item build/windows/x64/runner/Release/localsend_app.exe.manifest
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "LocalSend-${{ needs.prepare.outputs.version }}-windows-x86-64.zip"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows
+          path: localsend/app/LocalSend-${{ needs.prepare.outputs.version }}-windows-x86-64.zip
+
+  server:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone LocalSend base
+        run: |
+          git init localsend
+          git -C localsend remote add origin https://github.com/LocalSend/LocalSend.git
+          git -C localsend fetch --depth 1 origin "$LOCAL_SEND_REF"
+          git -C localsend checkout FETCH_HEAD
+
+      - name: Apply relay patch
+        shell: bash
+        run: |
+          git -C localsend apply --check ../relay.patch
+          git -C localsend apply ../relay.patch
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build server
+        working-directory: localsend/server
+        run: cargo build --release
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: server
+          path: localsend/target/release/server
+
+  release:
+    needs: [android, windows, server]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: relay-${{ needs.prepare.outputs.version }}-${{ github.sha }}
+          name: LocalSend Relay ${{ needs.prepare.outputs.version }} (${{ github.sha }})
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

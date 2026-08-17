@@ -1,0 +1,1713 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index fe6ce2a..378725d 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2213,6 +2213,7 @@ dependencies = [
+  "tracing",
+  "tracing-subscriber",
+  "tungstenite 0.30.0",
++ "url",
+  "uuid",
+  "webrtc",
+  "x509-parser 0.18.1",
+diff --git a/app/lib/main.dart b/app/lib/main.dart
+index 47ac3a6..43ac83f 100644
+--- a/app/lib/main.dart
++++ b/app/lib/main.dart
+@@ -1,4 +1,7 @@
++import 'dart:async';
++
+ import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
+ import 'package:flutter_localizations/flutter_localizations.dart';
+ import 'package:localsend_app/config/init.dart';
+ import 'package:localsend_app/config/init_error.dart';
+@@ -7,6 +10,7 @@ import 'package:localsend_app/gen/strings.g.dart';
+ import 'package:localsend_app/model/persistence/color_mode.dart';
+ import 'package:localsend_app/pages/home_page.dart';
+ import 'package:localsend_app/provider/local_ip_provider.dart';
++import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+ import 'package:localsend_app/util/ui/dynamic_colors.dart';
+ import 'package:localsend_app/widget/watcher/life_cycle_watcher.dart';
+@@ -40,9 +44,26 @@ Future<void> main(List<String> args) async {
+   );
+ }
+ 
+-class LocalSendApp extends StatelessWidget {
++class LocalSendApp extends StatefulWidget {
+   const LocalSendApp();
+ 
++  @override
++  State<LocalSendApp> createState() => _LocalSendAppState();
++}
++
++class _LocalSendAppState extends State<LocalSendApp> with Refena {
++  String? _lastClipboardMessage;
++
++  Future<void> _readClipboard() async {
++    final data = await Clipboard.getData(Clipboard.kTextPlain);
++    final text = data?.text?.trim();
++    if (text == null || text.isEmpty || text == _lastClipboardMessage) {
++      return;
++    }
++    _lastClipboardMessage = text;
++    ref.redux(selectedSendingFilesProvider).dispatch(AddMessageAction(message: text));
++  }
++
+   @override
+   Widget build(BuildContext context) {
+     final ref = context.ref;
+@@ -57,6 +78,7 @@ class LocalSendApp extends StatelessWidget {
+             switch (state) {
+               case AppLifecycleState.resumed:
+                 ref.redux(localIpProvider).dispatch(InitLocalIpAction());
++                unawaited(_readClipboard());
+                 break;
+               case AppLifecycleState.detached:
+                 // The main isolate is only exited when all child isolates are exited.
+diff --git a/app/lib/pages/progress_page.dart b/app/lib/pages/progress_page.dart
+index 99d666f..533dc96 100644
+--- a/app/lib/pages/progress_page.dart
++++ b/app/lib/pages/progress_page.dart
+@@ -10,6 +10,8 @@ import 'package:localsend_app/pages/web_share_page.dart';
+ import 'package:localsend_app/provider/file_transfer_provider.dart';
+ import 'package:localsend_app/provider/network/send_provider.dart';
+ import 'package:localsend_app/provider/network/server/server_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/webrtc_receive_sessions_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+ import 'package:localsend_app/util/native/open_file.dart';
+ import 'package:localsend_app/util/native/open_folder.dart';
+@@ -112,13 +114,15 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+ 
+       setState(() {
+         final receiveSession = ref.read(serverProvider)?.session;
++        final sendSession = ref.read(sendProvider)[widget.sessionId];
++        final webRTCSession = ref.read(webRTCReceiveSessionsProvider)[widget.sessionId];
++        final webRTCReceiveSession = webRTCSession == null ? null : ref.read(webRTCSession.provider).sessionState;
+         if (receiveSession != null) {
+           _files = receiveSession.files.values.map((f) => f.file).toList();
+-        } else {
+-          final sendSession = ref.read(sendProvider)[widget.sessionId];
+-          if (sendSession != null) {
+-            _files = sendSession.files.values.map((f) => f.file).toList();
+-          }
++        } else if (sendSession != null) {
++          _files = sendSession.files.values.map((f) => f.file).toList();
++        } else if (webRTCReceiveSession != null) {
++          _files = webRTCReceiveSession.files.values.map((f) => f.file).toList();
+         }
+ 
+         // We previously used f.token != null here, but this may not work on very fast networks.
+@@ -136,7 +140,9 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+   void _exit({required bool closeSession}) async {
+     final receiveSession = ref.read(serverProvider.select((s) => s?.session));
+     final sendSession = ref.read(sendProvider)[widget.sessionId];
+-    final SessionStatus? status = receiveSession?.status ?? sendSession?.status;
++    final webRTCSession = ref.read(webRTCReceiveSessionsProvider)[widget.sessionId];
++    final webRTCReceiveSession = webRTCSession == null ? null : ref.read(webRTCSession.provider).sessionState;
++    final SessionStatus? status = receiveSession?.status ?? sendSession?.status ?? webRTCReceiveSession?.status;
+     final keepSession = !closeSession && (status == SessionStatus.sending || status == SessionStatus.finishedWithErrors);
+     final result = status == null || keepSession || await _askCancelConfirmation(status);
+ 
+@@ -157,6 +163,7 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+     if (result) {
+       final receiveSession = ref.read(serverProvider)?.session;
+       final sendState = ref.read(sendProvider)[widget.sessionId];
++      final webRTCSession = ref.read(webRTCReceiveSessionsProvider)[widget.sessionId];
+ 
+       if (receiveSession != null) {
+         if (receiveSession.status == SessionStatus.sending) {
+@@ -170,6 +177,8 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+         } else {
+           ref.notifier(sendProvider).closeSession(widget.sessionId);
+         }
++      } else if (webRTCSession != null) {
++        ref.redux(webRTCSession.provider).dispatch(CloseSessionAction());
+       }
+     }
+     return result;
+@@ -200,8 +209,10 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+     // over the whole files map on every state change.
+     final receiveSession = ref.watch(serverProvider)?.session;
+     final sendSession = ref.watch(sendProvider)[widget.sessionId];
++    final webRTCSession = ref.watch(webRTCReceiveSessionsProvider)[widget.sessionId];
++    final webRTCReceiveSession = webRTCSession == null ? null : ref.watch(webRTCSession.provider).sessionState;
+ 
+-    final SessionState? commonSessionState = receiveSession ?? sendSession;
++    final SessionState? commonSessionState = receiveSession ?? sendSession ?? webRTCReceiveSession;
+ 
+     if (commonSessionState == null) {
+       // The session no longer exists, e.g. a multi-send session that finished successfully
+@@ -232,9 +243,10 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+       TaskbarHelper.visualizeStatus(status);
+     }
+ 
+-    final title = receiveSession != null ? t.progressPage.titleReceiving : t.progressPage.titleSending;
++    final title = receiveSession != null || webRTCReceiveSession != null ? t.progressPage.titleReceiving : t.progressPage.titleSending;
+     final startTime = commonSessionState.startTime;
+     final endTime = commonSessionState.endTime;
++    final destinationDirectory = receiveSession?.destinationDirectory ?? webRTCReceiveSession?.destinationDirectory;
+     final int? speedInBytes;
+     if (startTime != null && currBytes >= 500 * 1024) {
+       speedInBytes = getFileSpeed(start: startTime, end: endTime ?? DateTime.now().millisecondsSinceEpoch, bytes: currBytes);
+@@ -289,7 +301,7 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                       crossAxisAlignment: CrossAxisAlignment.start,
+                       children: [
+                         Text(title, style: Theme.of(context).textTheme.titleLarge),
+-                        if (checkPlatformWithFileSystem() && receiveSession != null)
++                        if (checkPlatformWithFileSystem() && destinationDirectory != null)
+                           Padding(
+                             padding: const EdgeInsets.only(bottom: 10),
+                             child: Text.rich(
+@@ -300,7 +312,7 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                                     style: const TextStyle(color: Colors.grey),
+                                   ),
+                                   TextSpan(
+-                                    text: receiveSession.destinationDirectory,
++                                    text: destinationDirectory,
+                                     style: TextStyle(
+                                       color: checkPlatform([TargetPlatform.iOS]) ? Colors.grey : Theme.of(context).colorScheme.primary,
+                                     ),
+@@ -308,7 +320,7 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                                         ? null
+                                         : (TapGestureRecognizer()
+                                             ..onTap = () async {
+-                                              await openFolder(folderPath: receiveSession.destinationDirectory);
++                                              await openFolder(folderPath: destinationDirectory);
+                                             }),
+                                   ),
+                                 ],
+@@ -331,7 +343,8 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                 }
+ 
+                 final file = _files[index - 2];
+-                final String fileName = receiveSession?.files[file.id]?.desiredName ?? file.fileName;
++                final String fileName =
++                    webRTCReceiveSession?.files[file.id]?.desiredName ?? receiveSession?.files[file.id]?.desiredName ?? file.fileName;
+ 
+                 final fileStatus = transferNotifier.getStatus(sessionId: widget.sessionId, fileId: file.id);
+                 final savedToGallery = receiveSession?.files[file.id]?.savedToGallery ?? false;
+@@ -341,6 +354,8 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                   filePath = receiveSession.files[file.id]!.path;
+                 } else if (sendSession != null) {
+                   filePath = sendSession.files[file.id]!.path;
++                } else if (webRTCReceiveSession != null && fileStatus == FileStatus.finished) {
++                  filePath = webRTCReceiveSession.files[file.id]?.path;
+                 } else {
+                   filePath = null;
+                 }
+@@ -350,6 +365,8 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                   errorMessage = receiveSession.files[file.id]!.errorMessage;
+                 } else if (sendSession != null) {
+                   errorMessage = sendSession.files[file.id]!.errorMessage;
++                } else if (webRTCReceiveSession != null) {
++                  errorMessage = webRTCReceiveSession.files[file.id]?.errorMessage;
+                 } else {
+                   errorMessage = null;
+                 }
+@@ -371,7 +388,9 @@ class _ProgressPageState extends State<ProgressPage> with Refena {
+                     splashFactory: NoSplash.splashFactory,
+                     highlightColor: Colors.transparent,
+                     hoverColor: Colors.transparent,
+-                    onTap: filePath != null && receiveSession != null ? () async => openFile(context, file.fileType, filePath!) : null,
++                    onTap: filePath != null && (receiveSession != null || webRTCReceiveSession != null)
++                        ? () async => openFile(context, file.fileType, filePath!)
++                        : null,
+                     child: Row(
+                       crossAxisAlignment: CrossAxisAlignment.center,
+                       children: [
+diff --git a/app/lib/provider/network/send_provider.dart b/app/lib/provider/network/send_provider.dart
+index d4adf33..4b94925 100644
+--- a/app/lib/provider/network/send_provider.dart
++++ b/app/lib/provider/network/send_provider.dart
+@@ -1,5 +1,6 @@
+ import 'dart:async';
+ import 'dart:convert';
++import 'dart:io';
+ import 'package:flutter/material.dart';
+ import 'package:localsend_app/model/cross_file.dart';
+ import 'package:localsend_app/model/send_mode.dart';
+@@ -12,6 +13,8 @@ import 'package:localsend_app/pages/send_page.dart';
+ import 'package:localsend_app/provider/device_info_provider.dart';
+ import 'package:localsend_app/provider/file_transfer_provider.dart';
+ import 'package:localsend_app/provider/http_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/signaling_provider.dart';
++import 'package:localsend_app/provider/persistence_provider.dart';
+ import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+ import 'package:localsend_app/widget/dialogs/pin_dialog.dart';
+@@ -24,6 +27,7 @@ import 'package:localsend_isolates/model/session_status.dart';
+ import 'package:localsend_isolates/rust/api/cancel.dart' as rust_cancel;
+ import 'package:localsend_isolates/rust/api/http.dart' as rust_http;
+ import 'package:localsend_isolates/rust/api/model.dart' as rust_model;
++import 'package:localsend_isolates/rust/api/webrtc.dart';
+ import 'package:localsend_isolates/util/file_hash.dart';
+ import 'package:localsend_isolates/util/rust.dart';
+ import 'package:localsend_isolates/util/sleep.dart';
+@@ -332,13 +336,21 @@ class SendNotifier extends Notifier<Map<String, SendSessionState>> {
+               return;
+           }
+         } catch (e) {
+-          state = state.updateSession(
+-            sessionId: sessionId,
+-            state: (s) => s?.copyWith(
+-              status: SessionStatus.finishedWithErrors,
+-              errorMessage: e.humanErrorMessage,
+-            ),
+-          );
++          if (target.channels.whereType<SignalingChannel>().isNotEmpty) {
++            await _sendViaWebRtc(
++              sessionId: sessionId,
++              requestState: requestState,
++              target: target,
++            );
++          } else {
++            state = state.updateSession(
++              sessionId: sessionId,
++              state: (s) => s?.copyWith(
++                status: SessionStatus.finishedWithErrors,
++                errorMessage: e.humanErrorMessage,
++              ),
++            );
++          }
+           return;
+         }
+       } while (invalidPin);
+@@ -538,6 +550,276 @@ class SendNotifier extends Notifier<Map<String, SendSessionState>> {
+     }
+   }
+ 
++  Future<void> _sendViaWebRtc({
++    required String sessionId,
++    required SendSessionState requestState,
++    required Device target,
++  }) async {
++    SignalingChannel? signalingChannel;
++    final signalingState = ref.read(signalingProvider);
++    for (final channel in target.channels.whereType<SignalingChannel>()) {
++      if (signalingState.connections.containsKey(channel.signalingServer)) {
++        signalingChannel = channel;
++        break;
++      }
++    }
++
++    final connection = signalingChannel == null ? null : signalingState.connections[signalingChannel.signalingServer];
++    final signalingId = target.signalingId;
++    if (signalingId == null || connection == null) {
++      state = state.updateSession(
++        sessionId: sessionId,
++        state: (s) => s?.copyWith(
++          status: SessionStatus.finishedWithErrors,
++          endTime: DateTime.now().millisecondsSinceEpoch,
++          errorMessage: 'WebRTC signaling connection is not available',
++        ),
++      );
++      return;
++    }
++
++    final RtcSendController controller;
++    try {
++      controller = await connection.sendOffer(
++        stunServers: signalingState.stunServers,
++        target: UuidValue.fromString(signalingId),
++        privateKey: ref.read(persistenceProvider).getWebRtcPrivateKey(),
++        files: requestState.files.values.map((f) => f.file.toRust()).toList(),
++      );
++    } catch (e) {
++      state = state.updateSession(
++        sessionId: sessionId,
++        state: (s) => s?.copyWith(
++          status: SessionStatus.finishedWithErrors,
++          endTime: DateTime.now().millisecondsSinceEpoch,
++          errorMessage: e.humanErrorMessage,
++        ),
++      );
++      return;
++    }
++
++    var terminalHandled = false;
++    StreamSubscription<RTCStatus>? statusSub;
++    StreamSubscription<RTCFileError>? errorSub;
++
++    void setTerminal(SessionStatus status, {String? errorMessage}) {
++      if (terminalHandled) {
++        return;
++      }
++      terminalHandled = true;
++      state = state.updateSession(
++        sessionId: sessionId,
++        state: (s) => s?.copyWith(
++          status: status,
++          endTime: DateTime.now().millisecondsSinceEpoch,
++          errorMessage: errorMessage,
++        ),
++      );
++    }
++
++    statusSub = controller.listenStatus().listen((status) {
++      switch (status) {
++        case RTCStatus_PinRequired():
++          unawaited(
++            showDialog<String>(
++              context: Routerino.context, // ignore: use_build_context_synchronously
++              builder: (_) => PinDialog(obscureText: true),
++            ).then((pin) async {
++              if (pin == null) {
++                return;
++              }
++              try {
++                await controller.sendPin(pin: pin);
++              } catch (e) {
++                _logger.warning('Error while sending WebRTC pin', e);
++                setTerminal(SessionStatus.finishedWithErrors, errorMessage: e.humanErrorMessage);
++              }
++            }),
++          );
++          break;
++        case RTCStatus_Declined():
++          setTerminal(SessionStatus.declined);
++          break;
++        case RTCStatus_TooManyAttempts():
++          setTerminal(SessionStatus.tooManyAttempts);
++          break;
++        case RTCStatus_Error(:final field0):
++          setTerminal(SessionStatus.finishedWithErrors, errorMessage: field0);
++          break;
++        default:
++          break;
++      }
++    });
++
++    errorSub = controller.listenError().listen((error) {
++      _logger.warning('WebRTC file error: ${error.fileId} ${error.error}');
++      ref.notifier(fileTransferProvider).setStatus(sessionId: sessionId, fileId: error.fileId, status: FileStatus.failed);
++      final session = state[sessionId];
++      if (session != null && session.files.containsKey(error.fileId)) {
++        state = state.updateSession(
++          sessionId: sessionId,
++          state: (s) => s?.withFileError(error.fileId, error.error),
++        );
++      }
++    });
++
++    final Set<String> selectedIds;
++    try {
++      selectedIds = await controller.listenSelectedFiles();
++    } catch (e) {
++      if (state[sessionId] != null && !terminalHandled) {
++        setTerminal(SessionStatus.finishedWithErrors, errorMessage: e.humanErrorMessage);
++      }
++      await statusSub.cancel();
++      await errorSub.cancel();
++      return;
++    }
++
++    if (state[sessionId] == null) {
++      await statusSub.cancel();
++      await errorSub.cancel();
++      return;
++    }
++
++    final sendingFiles = {
++      for (final file in requestState.files.values) file.file.id: selectedIds.contains(file.file.id) ? file.copyWith(token: file.file.id) : file,
++    };
++
++    final transferNotifier = ref.notifier(fileTransferProvider);
++    transferNotifier.removeSession(sessionId);
++    transferNotifier.setStatuses(
++      sessionId: sessionId,
++      statuses: {for (final file in sendingFiles.values) file.file.id: file.token != null ? FileStatus.queue : FileStatus.skipped},
++    );
++
++    if (state[sessionId]?.background == false) {
++      final background = ref.read(settingsProvider).sendMode == SendMode.multiple;
++
++      unawaited(
++        // ignore: use_build_context_synchronously
++        Routerino.context
++            .pushAndRemoveUntil(
++              removeUntil: HomePage,
++              transition: RouterinoTransition.fade(),
++              builder: () => ProgressPage(
++                showAppBar: background,
++                closeSessionOnClose: !background,
++                sessionId: sessionId,
++              ),
++            )
++            .then((_) {
++              if (background) {
++                setBackground(sessionId, true);
++              }
++            }),
++      );
++    }
++
++    state = state.updateSession(
++      sessionId: sessionId,
++      state: (s) => s?.copyWith(
++        status: SessionStatus.sending,
++        files: sendingFiles,
++        startTime: DateTime.now().millisecondsSinceEpoch,
++      ),
++    );
++
++    TransferNotification.start(sessionId: sessionId, receiving: false);
++
++    try {
++      for (final file in sendingFiles.values) {
++        if (file.token == null || state[sessionId] == null) {
++          continue;
++        }
++        final sender = await controller.sendFile(fileId: file.file.id);
++        await _sendWebRtcFile(
++          sessionId: sessionId,
++          file: file,
++          sender: sender,
++        );
++      }
++    } catch (e, st) {
++      _logger.warning('Error while sending WebRTC files', e, st);
++      final error = e.humanErrorMessage;
++      final currentTransferNotifier = ref.notifier(fileTransferProvider);
++      final failedFileIds = sendingFiles.values
++          .map((file) => file.file.id)
++          .where((id) => const {FileStatus.queue, FileStatus.sending}.contains(currentTransferNotifier.getStatus(sessionId: sessionId, fileId: id)))
++          .toSet();
++      currentTransferNotifier.setStatuses(
++        sessionId: sessionId,
++        statuses: {for (final id in failedFileIds) id: FileStatus.failed},
++      );
++      state = state.updateSession(
++        sessionId: sessionId,
++        state: (s) => s?.copyWith(
++          files: s.files.map((key, value) {
++            if (failedFileIds.contains(key)) {
++              return MapEntry(key, value.copyWith(errorMessage: error));
++            }
++            return MapEntry(key, value);
++          }),
++        ),
++      );
++    } finally {
++      await statusSub.cancel();
++      await errorSub.cancel();
++    }
++
++    _finish(sessionId: sessionId);
++  }
++
++  Future<void> _sendWebRtcFile({
++    required String sessionId,
++    required SendingFile file,
++    required RtcFileSender sender,
++  }) async {
++    final fileId = file.file.id;
++    final transferNotifier = ref.notifier(fileTransferProvider);
++    transferNotifier.setStatus(sessionId: sessionId, fileId: fileId, status: FileStatus.sending);
++    var sentBytes = 0;
++
++    Future<void> sendChunks(List<int> data) async {
++      for (var offset = 0; offset < data.length; offset += 16 * 1024) {
++        final end = offset + 16 * 1024 < data.length ? offset + 16 * 1024 : data.length;
++        await sender.send(data: data.sublist(offset, end));
++        sentBytes += end - offset;
++        transferNotifier.setProgress(
++          sessionId: sessionId,
++          fileId: fileId,
++          progress: file.file.size == 0 ? 1 : (sentBytes / file.file.size).clamp(0, 1),
++        );
++        _updateForegroundServiceProgress(sessionId);
++      }
++    }
++
++    try {
++      final bytes = file.bytes;
++      if (bytes != null) {
++        await sendChunks(bytes);
++      } else if (file.path != null && file.path!.startsWith('content://')) {
++        final data = await uriContent.from(Uri.parse(file.path!));
++        await sendChunks(data);
++      } else if (file.path != null) {
++        await for (final chunk in File(file.path!).openRead()) {
++          await sendChunks(chunk);
++        }
++      } else {
++        throw StateError('File has no readable data');
++      }
++
++      transferNotifier.setProgress(sessionId: sessionId, fileId: fileId, progress: 1);
++      transferNotifier.setStatus(sessionId: sessionId, fileId: fileId, status: FileStatus.finished);
++    } catch (e, st) {
++      _logger.warning('Error while sending ${file.file.fileName}', e, st);
++      transferNotifier.setStatus(sessionId: sessionId, fileId: fileId, status: FileStatus.failed);
++      state = state.updateSession(
++        sessionId: sessionId,
++        state: (s) => s?.withFileError(fileId, e.humanErrorMessage),
++      );
++    }
++  }
++
+   final uriContent = UriContent();
+ 
+   /// Sends a single file. Currently only used to retry a failed file.
+diff --git a/app/lib/provider/network/webrtc/signaling_provider.dart b/app/lib/provider/network/webrtc/signaling_provider.dart
+index 05f29ca..f872cf6 100644
+--- a/app/lib/provider/network/webrtc/signaling_provider.dart
++++ b/app/lib/provider/network/webrtc/signaling_provider.dart
+@@ -1,25 +1,24 @@
+ import 'dart:async';
+ 
+ import 'package:dart_mappable/dart_mappable.dart';
+-import 'package:flutter/foundation.dart';
+ import 'package:localsend_app/provider/device_info_provider.dart';
+ import 'package:localsend_app/provider/favorites_provider.dart';
++import 'package:localsend_app/provider/file_transfer_provider.dart';
+ import 'package:localsend_app/provider/network/nearby_devices_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/webrtc_receive_sessions_provider.dart';
+ import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
+ import 'package:localsend_app/provider/persistence_provider.dart';
+-import 'package:localsend_app/provider/security_provider.dart';
++import 'package:localsend_app/provider/receive_history_provider.dart';
+ import 'package:localsend_app/provider/settings_provider.dart';
+ import 'package:localsend_isolates/constants.dart';
+ import 'package:localsend_isolates/model/device.dart';
+-import 'package:localsend_isolates/rust/api/crypto.dart' as crypto;
+ import 'package:localsend_isolates/rust/api/model.dart' as rust;
+ import 'package:localsend_isolates/rust/api/webrtc.dart';
+ import 'package:refena_flutter/refena_flutter.dart';
+ 
+ part 'signaling_provider.mapper.dart';
+ 
+-/// WebRTC (and therefore the signaling connection) is disabled for now.
+-const webRTCEnabled = false;
++const webRTCEnabled = true;
+ 
+ @MappableClass()
+ class SignalingState with SignalingStateMappable {
+@@ -60,7 +59,12 @@ class SignalingService extends ReduxNotifier<SignalingState> {
+ class SetupSignalingConnection extends ReduxAction<SignalingService, SignalingState> with GlobalActions {
+   @override
+   SignalingState reduce() {
+-    for (final signalingServer in state.signalingServers) {
++    for (final rawSignalingServer in state.signalingServers) {
++      final signalingServer = rawSignalingServer.trim();
++      if (signalingServer.isEmpty || state.connections.containsKey(signalingServer)) {
++        continue;
++      }
++
+       // ignore: discarded_futures
+       global.dispatchAsync(_SetupSignalingConnection(signalingServer: signalingServer));
+     }
+@@ -79,22 +83,16 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+     final settings = ref.read(settingsProvider);
+     final deviceInfo = ref.read(deviceInfoProvider);
+ 
+-    // TODO: Use persistent key
+-    final key = await crypto.generateKeyPair();
+-    if (kDebugMode) {
+-      print('private key: ${key.privateKey}');
+-    }
+-
+     LsSignalingConnection? connection;
+     final stream = connect(
+-      uri: 'wss://public.localsend.org/v1/ws',
++      uri: signalingServer,
+       info: ProposingClientInfo(
+         alias: settings.alias,
+         version: protocolVersion,
+         deviceModel: deviceInfo.deviceModel,
+         deviceType: deviceInfo.deviceType.toRustDeviceType(),
+       ),
+-      privateKey: key.privateKey,
++      privateKey: ref.read(persistenceProvider).getWebRtcPrivateKey(),
+       onConnection: (c) {
+         connection = c;
+ 
+@@ -151,10 +149,21 @@ class _SetupSignalingConnection extends AsyncGlobalAction {
+                 offer: message.field0,
+                 settings: ref.read(settingsProvider),
+                 favorites: ref.read(favoritesProvider),
+-                key: ref.read(securityProvider),
++                privateKey: ref.read(persistenceProvider).getWebRtcPrivateKey(),
++                fileTransfer: ref.notifier(fileTransferProvider),
++                receiveHistory: ref.notifier(receiveHistoryProvider),
++                sessions: ref.notifier(webRTCReceiveSessionsProvider),
+               );
+             });
+ 
++            ref
++                .notifier(webRTCReceiveSessionsProvider)
++                .register(
++                  WebRTCReceiveSessionHandle(
++                    sessionId: message.field0.sessionId,
++                    provider: provider,
++                  ),
++                );
+             await ref.redux(provider).dispatchAsync(AcceptOfferAction());
+             break;
+           case WsServerMessage_Answer():
+diff --git a/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
+new file mode 100644
+index 0000000..0368495
+--- /dev/null
++++ b/app/lib/provider/network/webrtc/webrtc_receive_sessions_provider.dart
+@@ -0,0 +1,35 @@
++import 'package:localsend_app/provider/network/webrtc/webrtc_receiver.dart';
++import 'package:refena_flutter/refena_flutter.dart';
++
++/// A live handle to a WebRTC receive session, used by pages that are not
++/// created inside [WebRTCReceiveService] (notably [ProgressPage]).
++class WebRTCReceiveSessionHandle {
++  final String sessionId;
++  final ReduxProvider<WebRTCReceiveService, WebRTCReceiveState> provider;
++
++  const WebRTCReceiveSessionHandle({
++    required this.sessionId,
++    required this.provider,
++  });
++}
++
++/// Tracks active WebRTC receive sessions by the session id from the SDP offer.
++final webRTCReceiveSessionsProvider = NotifierProvider<WebRTCReceiveSessionsService, Map<String, WebRTCReceiveSessionHandle>>((ref) {
++  return WebRTCReceiveSessionsService();
++});
++
++class WebRTCReceiveSessionsService extends Notifier<Map<String, WebRTCReceiveSessionHandle>> {
++  @override
++  Map<String, WebRTCReceiveSessionHandle> init() => {};
++
++  void register(WebRTCReceiveSessionHandle handle) {
++    state = {
++      ...state,
++      handle.sessionId: handle,
++    };
++  }
++
++  void unregister(String sessionId) {
++    state = {...state}..remove(sessionId);
++  }
++}
+diff --git a/app/lib/provider/network/webrtc/webrtc_receiver.dart b/app/lib/provider/network/webrtc/webrtc_receiver.dart
+index b58ba85..93f1bd9 100644
+--- a/app/lib/provider/network/webrtc/webrtc_receiver.dart
++++ b/app/lib/provider/network/webrtc/webrtc_receiver.dart
+@@ -1,20 +1,38 @@
++import 'dart:async';
++import 'dart:convert';
++import 'dart:io';
++
++import 'package:collection/collection.dart';
+ import 'package:dart_mappable/dart_mappable.dart';
+ import 'package:localsend_app/model/persistence/favorite_device.dart';
+ import 'package:localsend_app/model/state/server/receive_session_state.dart';
++import 'package:localsend_app/model/state/server/receiving_file.dart';
+ import 'package:localsend_app/model/state/settings_state.dart';
++import 'package:localsend_app/pages/progress_page.dart';
+ import 'package:localsend_app/pages/receive_page.dart';
++import 'package:localsend_app/provider/file_transfer_provider.dart';
+ import 'package:localsend_app/provider/network/webrtc/signaling_provider.dart';
++import 'package:localsend_app/provider/network/webrtc/webrtc_receive_sessions_provider.dart';
++import 'package:localsend_app/provider/receive_history_provider.dart';
+ import 'package:localsend_app/provider/selection/selected_receiving_files_provider.dart';
++import 'package:localsend_app/util/native/directories.dart';
++import 'package:localsend_isolates/model/device.dart';
+ import 'package:localsend_isolates/model/dto/file_dto.dart' as dart_model;
++import 'package:localsend_isolates/model/file_status.dart';
++import 'package:localsend_isolates/model/file_type.dart';
+ import 'package:localsend_isolates/model/session_status.dart';
+-import 'package:localsend_isolates/model/stored_security_context.dart';
+ import 'package:localsend_isolates/rust/api/model.dart';
+ import 'package:localsend_isolates/rust/api/webrtc.dart';
++import 'package:logging/logging.dart';
++import 'package:path/path.dart' as p;
+ import 'package:refena_flutter/refena_flutter.dart';
+ import 'package:routerino/routerino.dart';
++import 'package:uuid/uuid.dart';
+ 
+ part 'webrtc_receiver.mapper.dart';
+ 
++final _logger = Logger('WebRTCReceive');
++
+ @MappableClass()
+ class WebRTCReceiveState with WebRTCReceiveStateMappable {
+   final LsSignalingConnection connection;
+@@ -37,7 +55,12 @@ class WebRTCReceiveService extends ReduxNotifier<WebRTCReceiveState> {
+   final List<String> _stunServers;
+   final LsSignalingConnection _connection;
+   final WsServerSdpMessage _offer;
+-  final StoredSecurityContext _key;
++  final String _privateKey;
++  final SettingsState _settings;
++  final List<FavoriteDevice> _favorites;
++  final FileTransferNotifier _fileTransfer;
++  final ReceiveHistoryService _receiveHistory;
++  final WebRTCReceiveSessionsService _sessions;
+ 
+   WebRTCReceiveService({
+     required String signalingServer,
+@@ -46,12 +69,20 @@ class WebRTCReceiveService extends ReduxNotifier<WebRTCReceiveState> {
+     required WsServerSdpMessage offer,
+     required SettingsState settings,
+     required List<FavoriteDevice> favorites,
+-    required StoredSecurityContext key,
++    required String privateKey,
++    required FileTransferNotifier fileTransfer,
++    required ReceiveHistoryService receiveHistory,
++    required WebRTCReceiveSessionsService sessions,
+   }) : _signalingServer = signalingServer,
+        _stunServers = stunServers,
+        _connection = connection,
+        _offer = offer,
+-       _key = key;
++       _privateKey = privateKey,
++       _settings = settings,
++       _favorites = favorites,
++       _fileTransfer = fileTransfer,
++       _receiveHistory = receiveHistory,
++       _sessions = sessions;
+ 
+   @override
+   WebRTCReceiveState init() {
+@@ -71,7 +102,7 @@ class AcceptOfferAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCRec
+     final controller = await state.connection.acceptOffer(
+       stunServers: notifier._stunServers,
+       offer: state.offer,
+-      privateKey: notifier._key.privateKey,
++      privateKey: notifier._privateKey,
+     );
+ 
+     controller.listenStatus().listen((status) {
+@@ -100,7 +131,18 @@ class _AcceptOfferAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCRe
+ 
+     final files = await controller.listenFiles();
+     final convertedFiles = files.map((e) => e.toFileDto()).toList();
+-    dispatch(_InitSessionState(convertedFiles));
++    final destinationDir = notifier._settings.destination ?? await getDefaultDestinationDirectory();
++    final cacheDir = await getCacheDirectory();
++    final sender = state.offer.peer.toDevice(notifier._signalingServer);
++
++    dispatch(
++      _InitSessionState(
++        files: convertedFiles,
++        destinationDirectory: destinationDir,
++        cacheDirectory: cacheDir,
++        sender: sender,
++      ),
++    );
+ 
+     final vm = ViewProvider((ref) {
+       final state = ref.watch(notifier.provider as ReduxProvider<WebRTCReceiveService, WebRTCReceiveState>);
+@@ -117,12 +159,24 @@ class _AcceptOfferAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCRe
+           RTCStatus_Error() => SessionStatus.finishedWithErrors,
+         },
+         sender: state.offer.peer.toDevice(notifier._signalingServer),
+-        showSenderInfo: true,
++        showSenderInfo: false,
+         files: convertedFiles,
+-        message: files.length == 1 && files[0].fileType.startsWith('text/') ? files[0].preview : null,
+-        onAccept: () {},
+-        onDecline: () {},
+-        onClose: () {},
++        message: convertedFiles.length == 1 && convertedFiles[0].fileType == FileType.text ? convertedFiles[0].preview : null,
++        onAccept: () {
++          final selection = ref.read(selectedReceivingFilesProvider);
++          final provider = notifier.provider! as ReduxProvider<WebRTCReceiveService, WebRTCReceiveState>;
++          // ignore: discarded_futures
++          ref.redux(provider).dispatchAsync(AcceptSelectionAction(selection: selection));
++        },
++        onDecline: () {
++          final provider = notifier.provider! as ReduxProvider<WebRTCReceiveService, WebRTCReceiveState>;
++          // ignore: discarded_futures
++          ref.redux(provider).dispatchAsync(DeclineSessionAction());
++        },
++        onClose: () {
++          final provider = notifier.provider! as ReduxProvider<WebRTCReceiveService, WebRTCReceiveState>;
++          ref.redux(provider).dispatch(CloseSessionAction());
++        },
+       );
+     });
+ 
+@@ -138,41 +192,306 @@ class _AcceptOfferAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCRe
+   }
+ }
+ 
++class AcceptSelectionAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  final Map<String, String> selection;
++
++  AcceptSelectionAction({required this.selection});
++
++  @override
++  Future<WebRTCReceiveState> reduce() async {
++    final controller = state.controller;
++    final session = state.sessionState;
++    if (controller == null || session == null) {
++      return state;
++    }
++
++    final message = session.message;
++    if (message != null) {
++      await controller.sendSelection(selection: {});
++      await external(notifier._receiveHistory).dispatchAsync(
++        AddHistoryEntryAction(
++          entryId: const Uuid().v4(),
++          fileName: message,
++          fileType: FileType.text,
++          path: null,
++          savedToGallery: false,
++          isMessage: true,
++          fileSize: utf8.encode(message).length,
++          senderAlias: session.senderAlias,
++          timestamp: DateTime.now().toUtc(),
++        ),
++      );
++      dispatch(CloseSessionAction());
++      return state;
++    }
++
++    if (selection.isEmpty) {
++      await controller.sendSelection(selection: {});
++      dispatch(CloseSessionAction());
++      return state;
++    }
++
++    final updatedSession = session.copyWith(
++      status: SessionStatus.sending,
++      files: Map.fromEntries(
++        session.files.values.map((entry) {
++          final desiredName = selection[entry.file.id];
++          return MapEntry(
++            entry.file.id,
++            ReceivingFile(
++              file: entry.file,
++              token: null,
++              desiredName: desiredName,
++              path: null,
++              savedToGallery: false,
++              errorMessage: null,
++            ),
++          );
++        }),
++      ),
++    );
++
++    notifier._fileTransfer.setStatuses(
++      sessionId: session.sessionId,
++      statuses: {
++        for (final file in session.files.values) file.file.id: selection.containsKey(file.file.id) ? FileStatus.queue : FileStatus.skipped,
++      },
++    );
++
++    dispatch(_SetSessionStatusAction(status: SessionStatus.sending, endTime: null));
++
++    // ignore: use_build_context_synchronously
++    unawaited(
++      Routerino.context.pushAndRemoveUntilImmediately(
++        removeUntil: ReceivePage,
++        builder: () => ProgressPage(
++          showAppBar: false,
++          closeSessionOnClose: true,
++          sessionId: session.sessionId,
++        ),
++      ),
++    );
++
++    await controller.sendSelection(selection: selection.keys.toSet());
++    return state.copyWith(
++      sessionState: updatedSession,
++    );
++  }
++
++  @override
++  void after() {
++    // ignore: discarded_futures
++    dispatchAsync(_ReceiveFilesAction());
++  }
++}
++
++class DeclineSessionAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  @override
++  Future<WebRTCReceiveState> reduce() async {
++    await state.controller?.decline();
++    dispatch(CloseSessionAction());
++    return state;
++  }
++}
++
++class CloseSessionAction extends ReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  @override
++  WebRTCReceiveState reduce() {
++    final sessionId = state.offer.sessionId;
++    notifier._sessions.unregister(sessionId);
++    notifier._fileTransfer.removeSession(sessionId);
++    return state.copyWith(
++      sessionState: null,
++    );
++  }
++}
++
++class _ReceiveFilesAction extends AsyncReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  @override
++  Future<WebRTCReceiveState> reduce() async {
++    final controller = state.controller;
++    final session = state.sessionState;
++    if (controller == null || session == null) {
++      return state;
++    }
++
++    final errorSub = controller.listenError().listen((error) {
++      _logger.warning('WebRTC file error: ${error.fileId} ${error.error}');
++      notifier._fileTransfer.setStatus(sessionId: session.sessionId, fileId: error.fileId, status: FileStatus.failed);
++      if (session.files.containsKey(error.fileId)) {
++        unawaited(
++          controller.sendFileStatus(
++            status: RTCSendFileResponse(
++              id: error.fileId,
++              success: false,
++              error: error.error,
++            ),
++          ),
++        );
++      }
++    });
++
++    try {
++      await for (final receiver in controller.listenReceiving()) {
++        final fileId = await receiver.getFileId();
++        final receivingFile = session.files[fileId];
++        if (receivingFile == null || receivingFile.desiredName == null) {
++          await controller.sendFileStatus(
++            status: RTCSendFileResponse(
++              id: fileId,
++              success: false,
++              error: 'File was not accepted',
++            ),
++          );
++          continue;
++        }
++
++        final destinationPath = _safeDestinationPath(
++          session.destinationDirectory,
++          receivingFile.desiredName!,
++        );
++        await Directory(p.dirname(destinationPath)).create(recursive: true);
++
++        final sink = File(destinationPath).openWrite();
++        var received = 0;
++        var started = false;
++        try {
++          await for (final chunk in receiver.receive()) {
++            if (!started) {
++              notifier._fileTransfer.setStatus(sessionId: session.sessionId, fileId: fileId, status: FileStatus.sending);
++              started = true;
++            }
++
++            sink.add(chunk);
++            received += chunk.length;
++            if (receivingFile.file.size > 0) {
++              notifier._fileTransfer.setProgress(
++                sessionId: session.sessionId,
++                fileId: fileId,
++                progress: (received / receivingFile.file.size).clamp(0, 1),
++              );
++            }
++          }
++
++          await sink.flush();
++          await sink.close();
++          notifier._fileTransfer.setProgress(sessionId: session.sessionId, fileId: fileId, progress: 1);
++          notifier._fileTransfer.setStatus(sessionId: session.sessionId, fileId: fileId, status: FileStatus.finished);
++          await controller.sendFileStatus(
++            status: RTCSendFileResponse(
++              id: fileId,
++              success: true,
++            ),
++          );
++          dispatch(
++            _UpdateReceivedFileAction(
++              fileId: fileId,
++              path: destinationPath,
++              errorMessage: null,
++            ),
++          );
++          await external(notifier._receiveHistory).dispatchAsync(
++            AddHistoryEntryAction(
++              entryId: fileId,
++              fileName: receivingFile.desiredName!,
++              fileType: receivingFile.file.fileType,
++              path: destinationPath,
++              savedToGallery: false,
++              isMessage: false,
++              fileSize: receivingFile.file.size,
++              senderAlias: session.senderAlias,
++              timestamp: DateTime.now().toUtc(),
++            ),
++          );
++        } catch (e, st) {
++          _logger.warning('Failed to receive ${receivingFile.file.fileName}', e, st);
++          try {
++            await sink.close();
++          } catch (_) {}
++          notifier._fileTransfer.setStatus(sessionId: session.sessionId, fileId: fileId, status: FileStatus.failed);
++          await controller.sendFileStatus(
++            status: RTCSendFileResponse(
++              id: fileId,
++              success: false,
++              error: e.toString(),
++            ),
++          );
++          dispatch(
++            _UpdateReceivedFileAction(
++              fileId: fileId,
++              path: null,
++              errorMessage: e.toString(),
++            ),
++          );
++        }
++      }
++
++      final statuses = notifier._fileTransfer.getStatuses(session.sessionId);
++      final hasError = statuses.any((status) => status == FileStatus.failed);
++      dispatch(
++        _SetSessionStatusAction(
++          status: hasError ? SessionStatus.finishedWithErrors : SessionStatus.finished,
++          endTime: DateTime.now().millisecondsSinceEpoch,
++        ),
++      );
++    } catch (e, st) {
++      _logger.warning('WebRTC receive stream failed', e, st);
++      dispatch(
++        _SetSessionStatusAction(
++          status: SessionStatus.finishedWithErrors,
++          endTime: DateTime.now().millisecondsSinceEpoch,
++        ),
++      );
++    } finally {
++      await errorSub.cancel();
++    }
++
++    return state;
++  }
++}
++
+ class _InitSessionState extends ReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
+   final List<dart_model.FileDto> files;
++  final String destinationDirectory;
++  final String cacheDirectory;
++  final Device sender;
+ 
+-  _InitSessionState(this.files);
++  _InitSessionState({
++    required this.files,
++    required this.destinationDirectory,
++    required this.cacheDirectory,
++    required this.sender,
++  });
+ 
+   @override
+   WebRTCReceiveState reduce() {
+-    return state;
+-    // TODO
+-    // return state.copyWith(
+-    //   sessionState: ReceiveSessionState(
+-    //     sessionId: state.offer.sessionId,
+-    //     status: SessionStatus.waiting,
+-    //     sender: state.offer.peer.toDevice(notifier._signalingServer),
+-    //     senderAlias: notifier._favorites.firstWhereOrNull((e) => e.fingerprint == notifier.info.fingerprint)?.alias ?? dto.info.alias,
+-    //     files: {
+-    //       for (final file in files)
+-    //         file.id: ReceivingFile(
+-    //           file: file,
+-    //           token: null,
+-    //           desiredName: null,
+-    //           path: null,
+-    //           savedToGallery: false,
+-    //           errorMessage: null,
+-    //         ),
+-    //     },
+-    //     startTime: null,
+-    //     endTime: null,
+-    //     destinationDirectory: destinationDir,
+-    //     cacheDirectory: cacheDir,
+-    //     saveToGallery: checkPlatformWithGallery() && settings.saveToGallery && dto.files.values.every((f) => !f.fileName.contains('/')),
+-    //     createdDirectories: {},
+-    //     responseHandler: streamController,
+-    //   ),
+-    // );
++    final alias = notifier._favorites.firstWhereOrNull((e) => e.fingerprint == sender.fingerprint)?.alias ?? sender.alias;
++
++    return state.copyWith(
++      sessionState: ReceiveSessionState(
++        sessionId: state.offer.sessionId,
++        status: SessionStatus.waiting,
++        sender: sender,
++        senderAlias: alias,
++        files: {
++          for (final file in files)
++            file.id: ReceivingFile(
++              file: file,
++              token: null,
++              desiredName: null,
++              path: null,
++              savedToGallery: false,
++              errorMessage: null,
++            ),
++        },
++        startTime: null,
++        endTime: null,
++        destinationDirectory: destinationDirectory,
++        cacheDirectory: cacheDirectory,
++        saveToGallery: false,
++        createdDirectories: {},
++      ),
++    );
+   }
+ }
+ 
+@@ -183,8 +502,104 @@ class _SetStatusAction extends ReduxAction<WebRTCReceiveService, WebRTCReceiveSt
+ 
+   @override
+   WebRTCReceiveState reduce() {
++    final session = state.sessionState;
++    final SessionStatus? mapped = switch (status) {
++      RTCStatus_Declined() => SessionStatus.declined,
++      RTCStatus_TooManyAttempts() => SessionStatus.tooManyAttempts,
++      RTCStatus_Finished() => SessionStatus.finished,
++      RTCStatus_Error() => SessionStatus.finishedWithErrors,
++      _ => null,
++    };
++
+     return state.copyWith(
+       status: status,
++      sessionState: session == null || mapped == null
++          ? session
++          : session.copyWith(
++              status: mapped,
++              endTime: DateTime.now().millisecondsSinceEpoch,
++            ),
++    );
++  }
++}
++
++class _UpdateReceivedFileAction extends ReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  final String fileId;
++  final String? path;
++  final String? errorMessage;
++
++  _UpdateReceivedFileAction({
++    required this.fileId,
++    required this.path,
++    required this.errorMessage,
++  });
++
++  @override
++  WebRTCReceiveState reduce() {
++    final session = state.sessionState;
++    if (session == null) {
++      return state;
++    }
++    return state.copyWith(
++      sessionState: session.fileFinished(
++        fileId: fileId,
++        path: path,
++        savedToGallery: false,
++        errorMessage: errorMessage,
++      ),
++    );
++  }
++}
++
++class _SetSessionStatusAction extends ReduxAction<WebRTCReceiveService, WebRTCReceiveState> {
++  final SessionStatus status;
++  final int? endTime;
++
++  _SetSessionStatusAction({
++    required this.status,
++    required this.endTime,
++  });
++
++  @override
++  WebRTCReceiveState reduce() {
++    final session = state.sessionState;
++    if (session == null) {
++      return state;
++    }
++    return state.copyWith(
++      sessionState: session.copyWith(
++        status: status,
++        endTime: endTime ?? session.endTime,
++      ),
++    );
++  }
++}
++
++String _safeDestinationPath(String destinationDirectory, String fileName) {
++  final parts = fileName.replaceAll('\\', '/').split('/').where((part) => part.isNotEmpty && part != '.' && part != '..').toList();
++  if (parts.isEmpty) {
++    return destinationDirectory;
++  }
++  return p.joinAll([destinationDirectory, ...parts]);
++}
++
++extension on ReceiveSessionState {
++  ReceiveSessionState fileFinished({
++    required String fileId,
++    required String? path,
++    required bool savedToGallery,
++    required String? errorMessage,
++  }) {
++    return copyWith(
++      files: {...files}
++        ..update(
++          fileId,
++          (file) => file.copyWith(
++            path: path,
++            savedToGallery: savedToGallery,
++            errorMessage: errorMessage,
++          ),
++        ),
+     );
+   }
+ }
+@@ -196,7 +611,7 @@ extension on FileDto {
+       fileName: fileName,
+       size: size.toInt(),
+       fileType: dart_model.decodeFromMime(fileType),
+-      hash: null,
++      hash: sha256,
+       preview: preview,
+       metadata: metadata?.toFileMetadata(),
+     );
+diff --git a/app/lib/provider/persistence_provider.dart b/app/lib/provider/persistence_provider.dart
+index 55a6f18..3ead6f1 100644
+--- a/app/lib/provider/persistence_provider.dart
++++ b/app/lib/provider/persistence_provider.dart
+@@ -22,6 +22,7 @@ import 'package:localsend_app/util/ui/animations_status.dart';
+ import 'package:localsend_isolates/constants.dart';
+ import 'package:localsend_isolates/model/device.dart';
+ import 'package:localsend_isolates/model/stored_security_context.dart';
++import 'package:localsend_isolates/rust/api/crypto.dart' as crypto;
+ import 'package:logging/logging.dart';
+ import 'package:refena_flutter/refena_flutter.dart';
+ import 'package:shared_preferences/shared_preferences.dart';
+@@ -49,6 +50,7 @@ const _version = 'ls_version';
+ const _securityContext = 'ls_security_context';
+ 
+ // WebRTC
++const _webRtcKeyPair = 'ls_webrtc_key_pair';
+ const _signalingServers = 'ls_signaling_servers';
+ const _stunServers = 'ls_stun_servers';
+ 
+@@ -174,6 +176,17 @@ class PersistenceService {
+       await prefs.setString(_securityContext, jsonEncode(await generateSecurityContext()));
+     }
+ 
++    if (prefs.getString(_webRtcKeyPair) == null) {
++      final keyPair = await crypto.generateKeyPair();
++      await prefs.setString(
++        _webRtcKeyPair,
++        jsonEncode({
++          'privateKey': keyPair.privateKey,
++          'publicKey': keyPair.publicKey,
++        }),
++      );
++    }
++
+     if (isFirstAppStart) {
+       final systemAnimations = await getSystemAnimationsStatus();
+       if (!systemAnimations) {
+@@ -226,6 +239,14 @@ class PersistenceService {
+     await _prefs.setString(_securityContext, jsonEncode(context));
+   }
+ 
++  String getWebRtcPrivateKey() {
++    return (jsonDecode(_prefs.getString(_webRtcKeyPair)!) as Map)['privateKey'] as String;
++  }
++
++  String getWebRtcPublicKey() {
++    return (jsonDecode(_prefs.getString(_webRtcKeyPair)!) as Map)['publicKey'] as String;
++  }
++
+   List<String>? getSignalingServers() {
+     final serversRaw = _prefs.getString(_signalingServers);
+     if (serversRaw == null) {
+diff --git a/packages/core/Cargo.toml b/packages/core/Cargo.toml
+index 8e99dfa..b12bc76 100644
+--- a/packages/core/Cargo.toml
++++ b/packages/core/Cargo.toml
+@@ -37,6 +37,7 @@ tokio-util = { version = "0.7.19", features = ["rt"], optional = true }
+ tracing = "0.1.44"
+ tracing-subscriber = { version = "0.3.23" }
+ tungstenite = "0.30.0"
++url = "2.5.8"
+ uuid = { version = "1.24.0", features = ["serde", "v4"] }
+ webrtc = { version = "0.14.0", optional = true }
+ x509-parser = { version = "0.18.1", features = ["verify"], optional = true }
+diff --git a/packages/core/src/webrtc/webrtc.rs b/packages/core/src/webrtc/webrtc.rs
+index e12a995..5093270 100644
+--- a/packages/core/src/webrtc/webrtc.rs
++++ b/packages/core/src/webrtc/webrtc.rs
+@@ -14,6 +14,7 @@ use std::io::{Read, Write};
+ use std::sync::Arc;
+ use std::time::Duration;
+ use tokio::sync::{mpsc, oneshot};
++use url::Url;
+ use uuid::Uuid;
+ use webrtc::api::APIBuilder;
+ use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+@@ -1071,15 +1072,15 @@ pub async fn accept_offer(
+ }
+ 
+ async fn create_peer_connection(
+-    stun: Vec<String>,
++    stun_servers: Vec<String>,
+ ) -> Result<(Arc<RTCPeerConnection>, mpsc::Receiver<()>)> {
+     let api = APIBuilder::new().build();
+ 
+     let config = RTCConfiguration {
+-        ice_servers: vec![RTCIceServer {
+-            urls: stun,
+-            ..Default::default()
+-        }],
++        ice_servers: stun_servers
++            .into_iter()
++            .map(|server| parse_ice_server(&server))
++            .collect::<Result<Vec<_>>>()?,
+         ..Default::default()
+     };
+ 
+@@ -1097,6 +1098,35 @@ async fn create_peer_connection(
+     Ok((Arc::new(peer_connection), done_rx))
+ }
+ 
++fn parse_ice_server(server: &str) -> Result<RTCIceServer> {
++    let server = server.trim();
++    if server.is_empty() {
++        return Ok(RTCIceServer {
++            urls: Vec::new(),
++            ..Default::default()
++        });
++    }
++
++    let url = Url::parse(server)
++        .map_err(|e| anyhow::anyhow!("Invalid ICE server URL: {e}"))?;
++    let scheme = url.scheme();
++
++    let username = url.username().to_owned();
++    let credential = url.password().unwrap_or_default().to_owned();
++
++    let is_turn = matches!(scheme, "turn" | "turns");
++    anyhow::ensure!(
++        !is_turn || (!username.is_empty() && !credential.is_empty()),
++        "TURN server requires a username and credential"
++    );
++
++    Ok(RTCIceServer {
++        urls: vec![server.to_owned()],
++        username: if is_turn { username } else { String::new() },
++        credential: if is_turn { credential } else { String::new() },
++    })
++}
++
+ async fn receive_nonce(receive_rx: &mut mpsc::Receiver<DataChannelMessage>) -> Result<Vec<u8>> {
+     let remote_nonce = match receive_rx.recv().await {
+         Some(msg) => {
+diff --git a/server/README.md b/server/README.md
+index 07b8b65..6ab6ede 100644
+--- a/server/README.md
++++ b/server/README.md
+@@ -1,3 +1,50 @@
+ # LocalSend Signaling Server
+ 
+-A signaling server for LocalSend. Using Rust and WebSockets.
++LocalSend 的 WebRTC 信令与在线发现服务器，使用 Rust 和 WebSocket 实现。
++
++服务器只负责设备发现、在线状态广播和 SDP/ICE 信令转发；媒体文件通过 WebRTC
++直连传输，无法直连时才由公网 STUN/TURN 兜底。
++
++## 房间模式
++
++- `ROOM_MODE=global`（默认）：所有客户端进入同一个大厅，公网部署时都能互相发现。
++- `ROOM_MODE=ip`：按客户端来源 IP 分组。IPv4 按单个 IP 分组，IPv6 按 `/64`
++  分组；同一 NAT 出口下的设备会出现在同一个在线列表里，适合内网优先场景。
++
++## 环境变量
++
++| 变量 | 默认值 | 说明 |
++| --- | --- | --- |
++| `ROOM_MODE` | `global` | `ip` 按来源 IP 分组，`global` 使用同一个大厅 |
++| `MAX_CONNECTIONS_PER_IP` | `10` | 每个来源 IP 允许的并发 WebSocket 连接数 |
++| `MAX_REQUESTS_PER_IP_PER_HOUR` | `1000` | 每个来源 IP 每小时的请求上限 |
++| `SERVER_IP` | `0.0.0.0` | 监听地址 |
++| `SERVER_PORT` | `3000` | 监听端口 |
++
++## 部署
++
++从仓库根目录构建并启动：
++
++```bash
++docker build -f server/Dockerfile -t localsend-signaling .
++docker run -d --name localsend-signaling \
++  -p 3000:3000 \
++  -e ROOM_MODE=ip \
++  -e MAX_CONNECTIONS_PER_IP=20 \
++  -e MAX_REQUESTS_PER_IP_PER_HOUR=1000 \
++  localsend-signaling
++```
++
++客户端连接地址为 `ws://服务器IP:3000/v1/ws`。生产环境建议使用 Nginx 或 Caddy
++提供 `wss://` 和 TLS，并正确透传 `X-Forwarded-For`，否则所有客户端会被反代 IP
++分到同一来源组。
++
++## 媒体兜底
++
++内网或同一 NAT 下可直连的设备会优先建立 P2P 通道。跨网络无法直连时，需要配置
++公网 TURN 服务，例如 coturn，并在客户端 ICE server 中加入：
++
++- STUN：`stun:公网地址:3478`
++- TURN：`turn:公网地址:3478`，带用户名和密码
++
++客户端还应配置本服务器的 WebSocket 地址作为信令服务器。
+diff --git a/server/src/config/state.rs b/server/src/config/state.rs
+index 4de801b..ee8cfe4 100644
+--- a/server/src/config/state.rs
++++ b/server/src/config/state.rs
+@@ -14,6 +14,9 @@ pub struct ClientState {
+ 
+ pub type IpRequestCountMap = Arc<Mutex<HashMap<String, u32>>>;
+ 
++/// IP group -> number of active WebSocket connections.
++pub type IpConnectionCountMap = Arc<Mutex<HashMap<String, u32>>>;
++
+ #[derive(Clone)]
+ pub struct AppState {
+     /// Map of peer IDs to WebSocket message senders.
+@@ -21,6 +24,9 @@ pub struct AppState {
+ 
+     /// Map of IP addresses to the number of requests.
+     pub request_count_map: IpRequestCountMap,
++
++    /// Map of IP addresses to the number of active connections.
++    pub connection_count_map: IpConnectionCountMap,
+ }
+ 
+ impl AppState {
+@@ -28,6 +34,7 @@ impl AppState {
+         Self {
+             tx_map: Arc::new(Mutex::new(HashMap::new())),
+             request_count_map: Arc::new(Mutex::new(HashMap::new())),
++            connection_count_map: Arc::new(Mutex::new(HashMap::new())),
+         }
+     }
+ }
+diff --git a/server/src/controller/ws_controller.rs b/server/src/controller/ws_controller.rs
+index 2a817f8..001783b 100644
+--- a/server/src/controller/ws_controller.rs
++++ b/server/src/controller/ws_controller.rs
+@@ -1,5 +1,5 @@
+ use crate::config::error::AppError;
+-use crate::config::state::{AppState, ClientState, IpRequestCountMap, TxMap};
++use crate::config::state::{AppState, ClientState, IpConnectionCountMap, IpRequestCountMap, TxMap};
+ use crate::util;
+ use crate::util::ip::get_ip_group;
+ use axum::body::Body;
+@@ -35,6 +35,10 @@ static MAX_REQUESTS: LazyLock<u32> = LazyLock::new(|| {
+         .unwrap()
+ });
+ 
++static ROOM_MODE: LazyLock<String> = LazyLock::new(|| {
++    std::env::var("ROOM_MODE").unwrap_or_else(|_| "global".to_string())
++});
++
+ #[derive(Deserialize)]
+ pub struct WsQuery {
+     /// `PeerRegisterDto` encoded as base64.
+@@ -73,12 +77,21 @@ pub async fn ws_handler(
+         raw_forwarded.unwrap_or(addr.ip())
+     };
+ 
++    let ip_group = get_ip_group(ip);
++    let room_key = if ROOM_MODE.as_str() == "ip" {
++        ip_group.clone()
++    } else {
++        "global".to_string()
++    };
++
+     Ok(ws.on_upgrade(move |socket| {
+         handle_socket(
+             state.tx_map,
+             state.request_count_map,
++            state.connection_count_map,
+             socket,
+-            get_ip_group(ip),
++            room_key,
++            ip_group,
+             peer_info,
+         )
+     }))
+@@ -88,7 +101,9 @@ pub async fn ws_handler(
+ async fn handle_socket(
+     tx_map: TxMap,
+     request_count_map: IpRequestCountMap,
++    connection_count_map: IpConnectionCountMap,
+     socket: WebSocket,
++    room_key: String,
+     ip_group: String,
+     peer: ClientInfo,
+ ) {
+@@ -105,22 +120,27 @@ async fn handle_socket(
+         // Used to break out of the lock as early as possible.
+         let mut limit_reached = false;
+ 
+-        'lock: {
+-            let mut tx_map = tx_map.lock().await;
++        if protect_ddos_request_count(&request_count_map, &ip_group)
++            .await
++            .is_err()
++        {
++            limit_reached = true;
++        }
+ 
+-            let tx_local_map = tx_map.entry(ip_group.clone()).or_insert_with(HashMap::new);
+-            if tx_local_map.len() >= *MAX_CONNECTIONS {
++        if !limit_reached {
++            let mut connection_count_map = connection_count_map.lock().await;
++            let count = connection_count_map.entry(ip_group.clone()).or_insert(0);
++            if (*count as usize) >= *MAX_CONNECTIONS {
+                 limit_reached = true;
+-                break 'lock;
++            } else {
++                *count += 1;
+             }
++        }
+ 
+-            if protect_ddos_request_count(&request_count_map, &ip_group)
+-                .await
+-                .is_err()
+-            {
+-                limit_reached = true;
+-                break 'lock;
+-            }
++        if !limit_reached {
++            let mut tx_map = tx_map.lock().await;
++
++            let tx_local_map = tx_map.entry(room_key.clone()).or_insert_with(HashMap::new);
+ 
+             peers_tx = tx_local_map.values().map(|p| p.tx.clone()).collect();
+ 
+@@ -139,7 +159,7 @@ async fn handle_socket(
+ 
+             let debug_active_connections = tx_map.len();
+             let debug_total_active_connections: usize = tx_map.values().map(|m| m.len()).sum();
+-            tracing::info!("Connect: {ip_group} / {peer_id} (active: {debug_active_connections}, total active: {debug_total_active_connections})");
++            tracing::info!("Connect: {room_key} / {peer_id} (active: {debug_active_connections}, total active: {debug_total_active_connections})");
+         }
+ 
+         if limit_reached {
+@@ -178,6 +198,7 @@ async fn handle_socket(
+ 
+     let tx_map_clone = tx_map.clone();
+     let ip_group_clone = ip_group.clone();
++    let room_key_clone = room_key.clone();
+     let mut recv_task = tokio::spawn(async move {
+         while let Some(Ok(msg)) = receiver.next().await {
+             if let Message::Text(text) = msg {
+@@ -198,7 +219,7 @@ async fn handle_socket(
+                         WsClientMessage::Update { info } => {
+                             send_update_to_other_peers_with_lock(
+                                 &tx_map_clone,
+-                                &ip_group_clone,
++                                &room_key_clone,
+                                 peer_id,
+                                 info,
+                             )
+@@ -207,7 +228,7 @@ async fn handle_socket(
+                         WsClientMessage::Offer(sdp) => {
+                             send_to_peer_with_lock(
+                                 &tx_map_clone,
+-                                &ip_group_clone,
++                                &room_key_clone,
+                                 peer.clone(),
+                                 WsClientSdpMessageWrapper::Offer(sdp),
+                             )
+@@ -216,7 +237,7 @@ async fn handle_socket(
+                         WsClientMessage::Answer(sdp) => {
+                             send_to_peer_with_lock(
+                                 &tx_map_clone,
+-                                &ip_group_clone,
++                                &room_key_clone,
+                                 peer.clone(),
+                                 WsClientSdpMessageWrapper::Answer(sdp),
+                             )
+@@ -250,11 +271,11 @@ async fn handle_socket(
+ 
+     {
+         let mut tx_map = tx_map.lock().await;
+-        let final_active_connections = match tx_map.get_mut(&ip_group) {
++        let final_active_connections = match tx_map.get_mut(&room_key) {
+             Some(tx_local_map) => {
+                 tx_local_map.remove(&peer_id);
+                 if tx_local_map.is_empty() {
+-                    tx_map.remove(&ip_group);
++                    tx_map.remove(&room_key);
+                     0
+                 } else {
+                     remaining_tx = tx_local_map.values().map(|p| p.tx.clone()).collect();
+@@ -267,6 +288,18 @@ async fn handle_socket(
+         tracing::info!("Disconnect: {peer_id} (active: {final_active_connections})");
+     }
+ 
++    {
++        let mut connection_count_map = connection_count_map.lock().await;
++        if let Some(count) = connection_count_map.get_mut(&ip_group) {
++            if *count > 0 {
++                *count -= 1;
++            }
++        }
++        if connection_count_map.get(&ip_group) == Some(&0) {
++            connection_count_map.remove(&ip_group);
++        }
++    }
++
+     for tx in remaining_tx {
+         let _ = tx.send(WsServerMessage::Left { peer_id }).await;
+     }
+@@ -274,16 +307,16 @@ async fn handle_socket(
+ 
+ async fn send_update_to_other_peers_with_lock(
+     tx_map: &TxMap,
+-    ip_group: &str,
++    room_key: &str,
+     peer_id: Uuid,
+     info: ClientInfoWithoutId,
+ ) {
+-    // Tx of other peers in the IP group.
++    // Tx of other peers in the room.
+     let mut peers_tx: Vec<mpsc::Sender<WsServerMessage>> = Vec::new();
+     let response_info = ClientInfo::from(info.clone(), peer_id);
+     {
+         let mut tx_map = tx_map.lock().await;
+-        if let Some(tx_local_map) = tx_map.get_mut(ip_group) {
++        if let Some(tx_local_map) = tx_map.get_mut(room_key) {
+             if let Some(peer_state) = tx_local_map.get_mut(&peer_id) {
+                 peer_state.client = info;
+ 
+@@ -312,7 +345,7 @@ enum WsClientSdpMessageWrapper {
+ 
+ async fn send_to_peer_with_lock(
+     tx_map: &TxMap,
+-    ip_group: &str,
++    room_key: &str,
+     origin_peer: ClientInfo,
+     message: WsClientSdpMessageWrapper,
+ ) {
+@@ -324,7 +357,7 @@ async fn send_to_peer_with_lock(
+     let mut target_peer_tx: Option<mpsc::Sender<WsServerMessage>> = None;
+     {
+         let tx_map = tx_map.lock().await;
+-        if let Some(tx_local_map) = tx_map.get(ip_group) {
++        if let Some(tx_local_map) = tx_map.get(room_key) {
+             if let Some(peer_state) = tx_local_map.get(&target) {
+                 target_peer_tx = Some(peer_state.tx.clone());
+             }
