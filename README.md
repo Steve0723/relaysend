@@ -33,12 +33,12 @@ WebRTC 信令服务器下互相发现和传输。
 chmod +x relay-server-linux-x86_64
 ROOM_MODE=ip \
 SERVER_IP=0.0.0.0 \
-SERVER_PORT=3000 \
+SERVER_PORT=18080 \
 MAX_CONNECTIONS_PER_IP=20 \
 ./relay-server-linux-x86_64
 ```
 
-客户端信令地址为 `ws://服务器IP:3000/v1/ws`。生产环境请放在 Nginx 或 Caddy
+客户端信令地址为 `ws://服务器IP:18080/v1/ws`。生产环境请放在 Nginx 或 Caddy
 后面启用 TLS，并确保透传 `X-Forwarded-For`。
 
 如果客户端需要跨 NAT 传输，还需要配置公网 TURN 服务，并在客户端 ICE server
@@ -63,7 +63,7 @@ bash deploy.sh
 ```bash
 docker build -t relaysend-server .
 docker run -d --name relaysend-server \
-  -p 3000:3000 \
+  -p 18080:18080 \
   -e ROOM_MODE=global \
   -e MAX_CONNECTIONS_PER_IP=20 \
   -e MAX_REQUESTS_PER_IP_PER_HOUR=1000 \
@@ -83,6 +83,7 @@ docker compose up -d --build
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `ROOM_MODE` | `global` | `ip` 按来源 IP 分组，`global` 使用同一个大厅 |
+| `SERVER_PORT` | `18080` | 监听端口 |
 | `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
 | `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
 | `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
@@ -90,8 +91,8 @@ docker compose up -d --build
 
 ### Nginx 反向代理示例
 
-假设域名是 `relay.example.com`，本地 RelaySend 服务监听 `127.0.0.1:3000`。
-建议只让代理端口对外，不要直接暴露 3000 端口。
+假设域名是 `relay.example.com`，本地 RelaySend 服务监听 `127.0.0.1:18080`。
+建议只让代理端口对外，不要直接暴露 18080 端口。
 
 ```nginx
 server {
@@ -108,7 +109,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/relay.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:18080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
@@ -133,7 +134,7 @@ wss://relay.example.com/v1/ws
 不需要安装 RelaySend 的设备可以打开：
 
 ```text
-http://服务器IP:3000/share
+http://服务器IP:18080/share
 ```
 
 粘贴文本或选择文件后提交，会生成 `/s/<id>` 链接。临时链接默认保留 24 小时，
@@ -150,7 +151,7 @@ https://relay.example.com/share
 安装 APK 后，在“设置 -> 网络 -> Relay server”中填写信令服务器地址，例如：
 
 ```text
-ws://123.45.67.89:3000/v1/ws
+ws://123.45.67.89:18080/v1/ws
 ```
 
 Windows 客户端同样在“设置 -> 网络 -> Relay server”中配置。

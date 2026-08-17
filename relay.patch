@@ -1529,21 +1529,22 @@ index 6c448e0..83e9cf7 100644
  futures-util = "0.3.31"
  localsend = { path = "../packages/core" }
 diff --git a/server/Dockerfile b/server/Dockerfile
-index 9bef482..bb0b93c 100644
+index 9bef482..f65ff8e 100644
 --- a/server/Dockerfile
 +++ b/server/Dockerfile
 @@ -18,5 +18,9 @@ FROM debian:bookworm AS runtime
  
  COPY --from=builder /server-bin /server
  
+-EXPOSE 3000
 +RUN mkdir -p /data/shares
 +
 +ENV SHARE_DATA_DIR=/data/shares
 +
- EXPOSE 3000
++EXPOSE 18080
  ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..08a47cc 100644
+index 07b8b65..0d15140 100644
 --- a/server/README.md
 +++ b/server/README.md
 @@ -1,3 +1,85 @@
@@ -1556,7 +1557,7 @@ index 07b8b65..08a47cc 100644
 +通过 WebRTC 直连传输，无法直连时才由公网 STUN/TURN 兜底。临时网页分享中的
 +文本和文件会按 TTL 短期保存在服务器指定的数据目录。
 +
-+服务器还提供一个不依赖客户端的临时分享页 `http://服务器IP:3000/share`，
++服务器还提供一个不依赖客户端的临时分享页 `http://服务器IP:18080/share`，
 +用于向没有安装 App 的设备临时分享文本或文件。
 +
 +## 房间模式
@@ -1573,7 +1574,7 @@ index 07b8b65..08a47cc 100644
 +| `MAX_CONNECTIONS_PER_IP` | `10` | 每个来源 IP 允许的并发 WebSocket 连接数 |
 +| `MAX_REQUESTS_PER_IP_PER_HOUR` | `1000` | 每个来源 IP 每小时的请求上限 |
 +| `SERVER_IP` | `0.0.0.0` | 监听地址 |
-+| `SERVER_PORT` | `3000` | 监听端口 |
++| `SERVER_PORT` | `18080` | 监听端口 |
 +| `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
 +| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
 +| `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
@@ -1587,7 +1588,7 @@ index 07b8b65..08a47cc 100644
 +```bash
 +docker build -f server/Dockerfile -t localsend-signaling .
 +docker run -d --name localsend-signaling \
-+  -p 3000:3000 \
++  -p 18080:18080 \
 +  -e ROOM_MODE=ip \
 +  -e MAX_CONNECTIONS_PER_IP=20 \
 +  -e MAX_REQUESTS_PER_IP_PER_HOUR=1000 \
@@ -1602,7 +1603,7 @@ index 07b8b65..08a47cc 100644
 +docker compose -f server/docker-compose.yml up -d --build
 +```
 +
-+客户端连接地址为 `ws://服务器IP:3000/v1/ws`。生产环境建议使用 Nginx 或 Caddy
++客户端连接地址为 `ws://服务器IP:18080/v1/ws`。生产环境建议使用 Nginx 或 Caddy
 +提供 `wss://` 和 TLS，并正确透传 `X-Forwarded-For`，否则所有客户端会被反代 IP
 +分到同一来源组。
 +
@@ -1611,7 +1612,7 @@ index 07b8b65..08a47cc 100644
 +服务器启动后，浏览器访问：
 +
 +```text
-+http://服务器IP:3000/share
++http://服务器IP:18080/share
 +```
 +
 +可以粘贴文本或选择文件，提交后生成 `/s/<id>` 链接。链接默认保留 24 小时，
@@ -2043,7 +2044,7 @@ index 2a817f8..788f16e 100644
                  target_peer_tx = Some(peer_state.tx.clone());
              }
 diff --git a/server/src/main.rs b/server/src/main.rs
-index 3efb369..04ab466 100644
+index 3efb369..8a4a0be 100644
 --- a/server/src/main.rs
 +++ b/server/src/main.rs
 @@ -1,4 +1,6 @@
@@ -2053,6 +2054,15 @@ index 3efb369..04ab466 100644
  use axum::routing::get;
  use axum::Router;
  use std::net::SocketAddr;
+@@ -16,7 +18,7 @@ async fn main() {
+         .into_make_service_with_connect_info::<SocketAddr>();
+ 
+     let server_ip = std::env::var("SERVER_IP").unwrap_or_else(|_| "0.0.0.0".to_string());
+-    let server_port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "3000".to_string());
++    let server_port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "18080".to_string());
+     let bind_address = format!("{server_ip}:{server_port}");
+ 
+     let listener = tokio::net::TcpListener::bind(bind_address.clone())
 @@ -29,5 +31,16 @@ async fn main() {
  #[rustfmt::skip]
  fn configure_routes() -> Router<config::state::AppState> {
@@ -2134,7 +2144,7 @@ index 0000000..0368495
 +}
 diff --git a/server/docker-compose.yml b/server/docker-compose.yml
 new file mode 100644
-index 0000000..30e55e0
+index 0000000..0bc3552
 --- /dev/null
 +++ b/server/docker-compose.yml
 @@ -0,0 +1,24 @@
@@ -2147,7 +2157,7 @@ index 0000000..30e55e0
 +    container_name: relaysend-server
 +    restart: unless-stopped
 +    ports:
-+      - "3000:3000"
++      - "18080:18080"
 +    environment:
 +      ROOM_MODE: global
 +      MAX_CONNECTIONS_PER_IP: "20"

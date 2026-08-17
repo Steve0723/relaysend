@@ -30,5 +30,6 @@ RUN mkdir -p /data/shares
 COPY --from=builder /server-bin /server
 
 ENV SHARE_DATA_DIR=/data/shares
-EXPOSE 3000
+ENV SERVER_PORT=18080
+EXPOSE 18080
 ENTRYPOINT ["/server"]
