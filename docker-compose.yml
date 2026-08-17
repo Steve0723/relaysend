@@ -1,0 +1,24 @@
+services:
+  relaysend-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: relaysend-server:local
+    container_name: relaysend-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ROOM_MODE: global
+      MAX_CONNECTIONS_PER_IP: "20"
+      MAX_REQUESTS_PER_IP_PER_HOUR: "1000"
+      SHARE_TTL_HOURS: "24"
+      MAX_SHARE_SIZE_MB: "100"
+      MAX_SHARE_FILES: "20"
+      MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: "100"
+      SHARE_DATA_DIR: /data/shares
+    volumes:
+      - relaysend-share-data:/data/shares
+
+volumes:
+  relaysend-share-data:

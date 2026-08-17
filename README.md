@@ -46,10 +46,11 @@ MAX_CONNECTIONS_PER_IP=20 \
 
 ### Docker 部署
 
-在已应用 `relay.patch` 的 LocalSend 仓库根目录构建镜像并启动：
+在本仓库根目录直接构建镜像并启动，构建时会自动拉取 LocalSend 基线并应用
+`relay.patch`：
 
 ```bash
-docker build -f server/Dockerfile -t relaysend-server .
+docker build -t relaysend-server .
 docker run -d --name relaysend-server \
   -p 3000:3000 \
   -e ROOM_MODE=global \
@@ -63,7 +64,7 @@ docker run -d --name relaysend-server \
 也可以使用 Docker Compose：
 
 ```bash
-docker compose -f server/docker-compose.yml up -d --build
+docker compose up -d --build
 ```
 
 可选环境变量：
