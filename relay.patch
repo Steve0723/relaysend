@@ -2049,9 +2049,9 @@ index 0000000..54e8bc1
 --- /dev/null
 +++ b/app/test/unit/model/nearby_devices_state_test.dart
 @@ -0,0 +1,63 @@
-+import 'package:flutter_test/flutter_test.dart';
 +import 'package:localsend_app/model/state/nearby_devices_state.dart';
 +import 'package:localsend_isolates/model/device.dart';
++import 'package:test/test.dart';
 +
 +void main() {
 +  test('allDevices prefers the latest signaling id and keeps channels', () {
