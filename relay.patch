@@ -281,7 +281,7 @@ index 99d666f..533dc96 100644
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
 diff --git a/app/lib/pages/tabs/settings_tab.dart b/app/lib/pages/tabs/settings_tab.dart
-index a2b92fc..2b96273 100644
+index a2b92fc..9dd9708 100644
 --- a/app/lib/pages/tabs/settings_tab.dart
 +++ b/app/lib/pages/tabs/settings_tab.dart
 @@ -1,5 +1,3 @@
@@ -305,7 +305,287 @@ index a2b92fc..2b96273 100644
  import 'package:localsend_app/util/native/macos_channel.dart';
  import 'package:localsend_app/util/native/pick_directory_path.dart';
  import 'package:localsend_app/util/native/platform_check.dart';
-@@ -353,6 +354,20 @@ class SettingsTab extends StatelessWidget {
+@@ -49,7 +50,11 @@ class SettingsTab extends StatelessWidget {
+           children: [
+             Padding(
+               padding: const EdgeInsets.only(left: 8),
+-              child: Text(t.settingsTab.title, style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
++              child: Text(
++                t.settingsTab.title,
++                style: Theme.of(context).textTheme.titleLarge,
++                textAlign: TextAlign.center,
++              ),
+             ),
+             const SizedBox(height: 30),
+             _SettingsSection(
+@@ -77,15 +82,21 @@ class SettingsTab extends StatelessWidget {
+                       return DropdownMenuItem(
+                         value: colorMode,
+                         alignment: Alignment.center,
+-                        child: Text(colorMode.humanName, overflow: TextOverflow.ellipsis),
++                        child: Text(
++                          colorMode.humanName,
++                          overflow: TextOverflow.ellipsis,
++                        ),
+                       );
+                     }).toList(),
+-                    onChanged: (colorMode) => vm.onChangeColorMode(context, colorMode),
++                    onChanged: (colorMode) =>
++                        vm.onChangeColorMode(context, colorMode),
+                   ),
+                 ),
+                 _ButtonEntry(
+                   label: t.settingsTab.general.language,
+-                  buttonLabel: vm.settings.locale?.getLocaleName() ?? t.settingsTab.general.languageOptions.system,
++                  buttonLabel:
++                      vm.settings.locale?.getLocaleName() ??
++                      t.settingsTab.general.languageOptions.system,
+                   onTap: () => vm.onTapLanguage(context),
+                 ),
+                 if (checkPlatformIsDesktop()) ...[
+@@ -97,7 +108,9 @@ class SettingsTab extends StatelessWidget {
+                           : t.settingsTab.general.saveWindowPlacement,
+                       value: vm.settings.saveWindowPlacement,
+                       onChanged: (b) async {
+-                        await ref.notifier(settingsProvider).setSaveWindowPlacement(b);
++                        await ref
++                            .notifier(settingsProvider)
++                            .setSaveWindowPlacement(b);
+                       },
+                     ),
+                   if (checkPlatformHasTray()) ...[
+@@ -105,7 +118,9 @@ class SettingsTab extends StatelessWidget {
+                       label: t.settingsTab.general.minimizeToTray,
+                       value: vm.settings.minimizeToTray,
+                       onChanged: (b) async {
+-                        await ref.notifier(settingsProvider).setMinimizeToTray(b);
++                        await ref
++                            .notifier(settingsProvider)
++                            .setMinimizeToTray(b);
+                       },
+                     ),
+                   ],
+@@ -125,12 +140,14 @@ class SettingsTab extends StatelessWidget {
+                         child: _BooleanEntry(
+                           label: t.settingsTab.general.launchMinimized,
+                           value: vm.autoStartLaunchHidden,
+-                          onChanged: (_) => vm.onToggleAutoStartLaunchHidden(context),
++                          onChanged: (_) =>
++                              vm.onToggleAutoStartLaunchHidden(context),
+                         ),
+                       ),
+                     ),
+                   ],
+-                  if (vm.advanced && checkPlatform([TargetPlatform.windows])) ...[
++                  if (vm.advanced &&
++                      checkPlatform([TargetPlatform.windows])) ...[
+                     _BooleanEntry(
+                       label: t.settingsTab.general.showInContextMenu,
+                       value: vm.showInContextMenu,
+@@ -157,7 +174,9 @@ class SettingsTab extends StatelessWidget {
+                     final old = vm.settings.quickSave;
+                     await ref.notifier(settingsProvider).setQuickSave(b);
+                     if (b) {
+-                      await ref.notifier(settingsProvider).setQuickSaveFromFavorites(false);
++                      await ref
++                          .notifier(settingsProvider)
++                          .setQuickSaveFromFavorites(false);
+                     }
+                     if (!old && b && context.mounted) {
+                       await QuickSaveNotice.open(context);
+@@ -169,7 +188,9 @@ class SettingsTab extends StatelessWidget {
+                   value: vm.settings.quickSaveFromFavorites,
+                   onChanged: (b) async {
+                     final old = vm.settings.quickSaveFromFavorites;
+-                    await ref.notifier(settingsProvider).setQuickSaveFromFavorites(b);
++                    await ref
++                        .notifier(settingsProvider)
++                        .setQuickSaveFromFavorites(b);
+                     if (b) {
+                       await ref.notifier(settingsProvider).setQuickSave(false);
+                     }
+@@ -195,13 +216,17 @@ class SettingsTab extends StatelessWidget {
+                       );
+ 
+                       if (newPin != null && newPin.isNotEmpty) {
+-                        await ref.notifier(settingsProvider).setReceivePin(newPin);
++                        await ref
++                            .notifier(settingsProvider)
++                            .setReceivePin(newPin);
+                       }
+                     }
+ 
+                     // The pin is enforced by the Rust server, so it needs a restart.
+                     if (ref.read(serverProvider) != null) {
+-                      await ref.notifier(serverProvider).restartServerFromSettings();
++                      await ref
++                          .notifier(serverProvider)
++                          .restartServerFromSettings();
+                     }
+                   },
+                 ),
+@@ -210,13 +235,23 @@ class SettingsTab extends StatelessWidget {
+                     label: t.settingsTab.receive.destination,
+                     child: TextButton(
+                       style: TextButton.styleFrom(
+-                        backgroundColor: Theme.of(context).inputDecorationTheme.fillColor,
+-                        shape: RoundedRectangleBorder(borderRadius: Theme.of(context).inputDecorationTheme.borderRadius),
+-                        foregroundColor: Theme.of(context).colorScheme.onSurface,
++                        backgroundColor: Theme.of(
++                          context,
++                        ).inputDecorationTheme.fillColor,
++                        shape: RoundedRectangleBorder(
++                          borderRadius: Theme.of(
++                            context,
++                          ).inputDecorationTheme.borderRadius,
++                        ),
++                        foregroundColor: Theme.of(
++                          context,
++                        ).colorScheme.onSurface,
+                       ),
+                       onPressed: () async {
+                         if (vm.settings.destination != null) {
+-                          await ref.notifier(settingsProvider).setDestination(null);
++                          await ref
++                              .notifier(settingsProvider)
++                              .setDestination(null);
+                           if (defaultTargetPlatform == TargetPlatform.macOS) {
+                             await removeExistingDestinationAccess();
+                           }
+@@ -228,12 +263,18 @@ class SettingsTab extends StatelessWidget {
+                           if (defaultTargetPlatform == TargetPlatform.macOS) {
+                             await persistDestinationFolderAccess(directory);
+                           }
+-                          await ref.notifier(settingsProvider).setDestination(directory);
++                          await ref
++                              .notifier(settingsProvider)
++                              .setDestination(directory);
+                         }
+                       },
+                       child: Padding(
+                         padding: const EdgeInsets.symmetric(vertical: 5),
+-                        child: Text(vm.settings.destination ?? t.settingsTab.receive.downloads, style: Theme.of(context).textTheme.titleMedium),
++                        child: Text(
++                          vm.settings.destination ??
++                              t.settingsTab.receive.downloads,
++                          style: Theme.of(context).textTheme.titleMedium,
++                        ),
+                       ),
+                     ),
+                   ),
+@@ -264,11 +305,15 @@ class SettingsTab extends StatelessWidget {
+                     label: t.settingsTab.receive.verifyChecksums,
+                     value: vm.settings.verifyChecksums,
+                     onChanged: (b) async {
+-                      await ref.notifier(settingsProvider).setVerifyChecksums(b);
++                      await ref
++                          .notifier(settingsProvider)
++                          .setVerifyChecksums(b);
+ 
+                       // The checksums are verified by the Rust server, so it needs a restart.
+                       if (ref.read(serverProvider) != null) {
+-                        await ref.notifier(serverProvider).restartServerFromSettings();
++                        await ref
++                            .notifier(serverProvider)
++                            .restartServerFromSettings();
+                       }
+                     },
+                   ),
+@@ -282,14 +327,18 @@ class SettingsTab extends StatelessWidget {
+                     label: t.settingsTab.send.shareViaLinkAutoAccept,
+                     value: vm.settings.shareViaLinkAutoAccept,
+                     onChanged: (b) async {
+-                      await ref.notifier(settingsProvider).setShareViaLinkAutoAccept(b);
++                      await ref
++                          .notifier(settingsProvider)
++                          .setShareViaLinkAutoAccept(b);
+                     },
+                   ),
+                   _BooleanEntry(
+                     label: t.settingsTab.send.createChecksums,
+                     value: vm.settings.createChecksums,
+                     onChanged: (b) async {
+-                      await ref.notifier(settingsProvider).setCreateChecksums(b);
++                      await ref
++                          .notifier(settingsProvider)
++                          .setCreateChecksums(b);
+                     },
+                   ),
+                 ],
+@@ -310,15 +359,23 @@ class SettingsTab extends StatelessWidget {
+                   firstChild: Container(),
+                   secondChild: Padding(
+                     padding: const EdgeInsets.only(bottom: 15),
+-                    child: Text(t.settingsTab.network.needRestart, style: TextStyle(color: Theme.of(context).colorScheme.warning)),
++                    child: Text(
++                      t.settingsTab.network.needRestart,
++                      style: TextStyle(
++                        color: Theme.of(context).colorScheme.warning,
++                      ),
++                    ),
+                   ),
+                 ),
+                 _SettingsEntry(
+-                  label: '${t.settingsTab.network.server}${vm.serverState == null ? ' (${t.general.offline})' : ''}',
++                  label:
++                      '${t.settingsTab.network.server}${vm.serverState == null ? ' (${t.general.offline})' : ''}',
+                   child: DecoratedBox(
+                     decoration: BoxDecoration(
+                       color: Theme.of(context).inputDecorationTheme.fillColor,
+-                      borderRadius: Theme.of(context).inputDecorationTheme.borderRadius,
++                      borderRadius: Theme.of(
++                        context,
++                      ).inputDecorationTheme.borderRadius,
+                     ),
+                     child: Row(
+                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+@@ -327,7 +384,12 @@ class SettingsTab extends StatelessWidget {
+                           Tooltip(
+                             message: t.general.start,
+                             child: TextButton(
+-                              style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.onSurface, iconSize: 24),
++                              style: TextButton.styleFrom(
++                                foregroundColor: Theme.of(
++                                  context,
++                                ).colorScheme.onSurface,
++                                iconSize: 24,
++                              ),
+                               onPressed: () => vm.onTapStartServer(context),
+                               child: const Icon(Icons.play_arrow),
+                             ),
+@@ -336,7 +398,12 @@ class SettingsTab extends StatelessWidget {
+                           Tooltip(
+                             message: t.general.restart,
+                             child: TextButton(
+-                              style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.onSurface, iconSize: 24),
++                              style: TextButton.styleFrom(
++                                foregroundColor: Theme.of(
++                                  context,
++                                ).colorScheme.onSurface,
++                                iconSize: 24,
++                              ),
+                               onPressed: () => vm.onTapRestartServer(context),
+                               child: const Icon(Icons.refresh),
+                             ),
+@@ -344,8 +411,15 @@ class SettingsTab extends StatelessWidget {
+                         Tooltip(
+                           message: t.general.stop,
+                           child: TextButton(
+-                            style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.onSurface, iconSize: 24),
+-                            onPressed: vm.serverState == null ? null : vm.onTapStopServer,
++                            style: TextButton.styleFrom(
++                              foregroundColor: Theme.of(
++                                context,
++                              ).colorScheme.onSurface,
++                              iconSize: 24,
++                            ),
++                            onPressed: vm.serverState == null
++                                ? null
++                                : vm.onTapStopServer,
+                             child: const Icon(Icons.stop),
+                           ),
+                         ),
+@@ -353,6 +427,20 @@ class SettingsTab extends StatelessWidget {
                      ),
                    ),
                  ),
@@ -326,7 +606,18 @@ index a2b92fc..2b96273 100644
                  _SettingsEntry(
                    label: t.settingsTab.network.alias,
                    child: TextFieldWithActions(
-@@ -382,14 +397,7 @@ class SettingsTab extends StatelessWidget {
+@@ -373,7 +461,9 @@ class SettingsTab extends StatelessWidget {
+                             vm.aliasController.text = newAlias;
+ 
+                             // Persist the new alias using the settingsProvider
+-                            await ref.notifier(settingsProvider).setAlias(newAlias);
++                            await ref
++                                .notifier(settingsProvider)
++                                .setAlias(newAlias);
+                           },
+                           icon: const Icon(Icons.casino),
+                         ),
+@@ -382,16 +472,11 @@ class SettingsTab extends StatelessWidget {
                          message: t.settingsTab.network.useSystemName,
                          child: IconButton(
                            onPressed: () async {
@@ -340,9 +631,145 @@ index a2b92fc..2b96273 100644
 -
 +                            final newAlias = await getSystemDeviceName();
                              vm.aliasController.text = newAlias;
-                             await ref.notifier(settingsProvider).setAlias(newAlias);
+-                            await ref.notifier(settingsProvider).setAlias(newAlias);
++                            await ref
++                                .notifier(settingsProvider)
++                                .setAlias(newAlias);
                            },
-@@ -772,3 +780,102 @@ extension on ColorMode {
+                           icon: const Icon(Icons.desktop_windows_rounded),
+                         ),
+@@ -412,7 +497,9 @@ class SettingsTab extends StatelessWidget {
+                         );
+                       }).toList(),
+                       onChanged: (type) async {
+-                        await ref.notifier(settingsProvider).setDeviceType(type);
++                        await ref
++                            .notifier(settingsProvider)
++                            .setDeviceType(type);
+                       },
+                     ),
+                   ),
+@@ -444,7 +531,8 @@ class SettingsTab extends StatelessWidget {
+                 if (vm.advanced)
+                   _ButtonEntry(
+                     label: t.settingsTab.network.network,
+-                    buttonLabel: switch (vm.settings.networkWhitelist != null || vm.settings.networkBlacklist != null) {
++                    buttonLabel: switch (vm.settings.networkWhitelist != null ||
++                        vm.settings.networkBlacklist != null) {
+                       true => t.settingsTab.network.networkOptions.filtered,
+                       false => t.settingsTab.network.networkOptions.all,
+                     },
+@@ -461,7 +549,9 @@ class SettingsTab extends StatelessWidget {
+                       onChanged: (s) async {
+                         final timeout = int.tryParse(s);
+                         if (timeout != null) {
+-                          await ref.notifier(settingsProvider).setDiscoveryTimeout(timeout);
++                          await ref
++                              .notifier(settingsProvider)
++                              .setDiscoveryTimeout(timeout);
+                         }
+                       },
+                     ),
+@@ -485,32 +575,43 @@ class SettingsTab extends StatelessWidget {
+                       name: t.settingsTab.network.multicastGroup,
+                       controller: vm.multicastController,
+                       onChanged: (s) async {
+-                        await ref.notifier(settingsProvider).setMulticastGroup(s);
++                        await ref
++                            .notifier(settingsProvider)
++                            .setMulticastGroup(s);
+                       },
+                     ),
+                   ),
+                 AnimatedCrossFade(
+-                  crossFadeState: vm.settings.port != defaultPort ? CrossFadeState.showSecond : CrossFadeState.showFirst,
++                  crossFadeState: vm.settings.port != defaultPort
++                      ? CrossFadeState.showSecond
++                      : CrossFadeState.showFirst,
+                   duration: const Duration(milliseconds: 200),
+                   alignment: Alignment.topLeft,
+                   firstChild: Container(),
+                   secondChild: Padding(
+                     padding: const EdgeInsets.only(bottom: 15),
+                     child: Text(
+-                      t.settingsTab.network.portWarning(defaultPort: defaultPort),
++                      t.settingsTab.network.portWarning(
++                        defaultPort: defaultPort,
++                      ),
+                       style: const TextStyle(color: Colors.grey),
+                     ),
+                   ),
+                 ),
+                 AnimatedCrossFade(
+-                  crossFadeState: vm.settings.multicastGroup != defaultMulticastGroup ? CrossFadeState.showSecond : CrossFadeState.showFirst,
++                  crossFadeState:
++                      vm.settings.multicastGroup != defaultMulticastGroup
++                      ? CrossFadeState.showSecond
++                      : CrossFadeState.showFirst,
+                   duration: const Duration(milliseconds: 200),
+                   alignment: Alignment.topLeft,
+                   firstChild: Container(),
+                   secondChild: Padding(
+                     padding: const EdgeInsets.only(bottom: 15),
+                     child: Text(
+-                      t.settingsTab.network.multicastGroupWarning(defaultMulticast: defaultMulticastGroup),
++                      t.settingsTab.network.multicastGroupWarning(
++                        defaultMulticast: defaultMulticastGroup,
++                      ),
+                       style: const TextStyle(color: Colors.grey),
+                     ),
+                   ),
+@@ -551,7 +652,9 @@ class SettingsTab extends StatelessWidget {
+                     buttonLabel: t.general.open,
+                     onTap: () async {
+                       await launchUrl(
+-                        Uri.parse('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'),
++                        Uri.parse(
++                          'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
++                        ),
+                         mode: LaunchMode.externalApplication,
+                       );
+                     },
+@@ -567,7 +670,9 @@ class SettingsTab extends StatelessWidget {
+                   labelFirst: true,
+                   onChanged: (b) async {
+                     vm.onTapAdvanced(b == true);
+-                    await ref.notifier(settingsProvider).setAdvancedSettingsEnabled(b == true);
++                    await ref
++                        .notifier(settingsProvider)
++                        .setAdvancedSettingsEnabled(b == true);
+                   },
+                 ),
+                 const SizedBox(width: 10),
+@@ -621,14 +726,9 @@ class _SettingsEntry extends StatelessWidget {
+       padding: const EdgeInsets.only(bottom: 15),
+       child: Row(
+         children: [
+-          Expanded(
+-            child: Text(label),
+-          ),
++          Expanded(child: Text(label)),
+           const SizedBox(width: 10),
+-          SizedBox(
+-            width: 150,
+-            child: child,
+-          ),
++          SizedBox(width: 150, child: child),
+         ],
+       ),
+     );
+@@ -699,7 +799,9 @@ class _ButtonEntry extends StatelessWidget {
+       child: TextButton(
+         style: TextButton.styleFrom(
+           backgroundColor: Theme.of(context).inputDecorationTheme.fillColor,
+-          shape: RoundedRectangleBorder(borderRadius: Theme.of(context).inputDecorationTheme.borderRadius),
++          shape: RoundedRectangleBorder(
++            borderRadius: Theme.of(context).inputDecorationTheme.borderRadius,
++          ),
+           foregroundColor: Theme.of(context).colorScheme.onSurface,
+         ),
+         onPressed: onTap,
+@@ -772,3 +874,149 @@ extension on ColorMode {
      };
    }
  }
@@ -400,32 +827,56 @@ index a2b92fc..2b96273 100644
 +Future<void> editIceServers(BuildContext context, Ref ref) async {
 +  final servers = [...ref.read(signalingProvider).stunServers];
 +  final controller = TextEditingController(text: servers.join('\n'));
++  String? error;
 +
 +  final result = await showDialog<String>(
 +    context: context,
 +    builder: (context) {
-+      return AlertDialog(
-+        title: const Text('STUN/TURN server'),
-+        content: SizedBox(
-+          width: 420,
-+          child: TextField(
-+            controller: controller,
-+            maxLines: 8,
-+            decoration: const InputDecoration(
-+              hintText: 'stun:relay.example.com:3478\nturn:username:password@relay.example.com:3478?transport=tcp',
++      return StatefulBuilder(
++        builder: (context, setState) {
++          return AlertDialog(
++            title: const Text('STUN/TURN server'),
++            content: SizedBox(
++              width: 420,
++              child: TextField(
++                controller: controller,
++                maxLines: 8,
++                decoration: InputDecoration(
++                  hintText:
++                      'stun:relay.example.com:3478\nturn:username:password@relay.example.com:3478?transport=tcp',
++                  helperText:
++                      'One address per line. TURN requires username and password before @.',
++                  errorText: error,
++                  errorMaxLines: 4,
++                ),
++              ),
 +            ),
-+          ),
-+        ),
-+        actions: [
-+          TextButton(
-+            onPressed: () => Navigator.pop(context),
-+            child: const Text('Cancel'),
-+          ),
-+          FilledButton(
-+            onPressed: () => Navigator.pop(context, controller.text),
-+            child: const Text('Save'),
-+          ),
-+        ],
++            actions: [
++              TextButton(
++                onPressed: () => Navigator.pop(context),
++                child: const Text('Cancel'),
++              ),
++              FilledButton(
++                onPressed: () {
++                  final nextServers = _parseIceServers(controller.text);
++                  final invalid = nextServers
++                      .map(_invalidIceServerError)
++                      .whereType<String>()
++                      .toList();
++                  if (invalid.isNotEmpty) {
++                    setState(() {
++                      error =
++                          'TURN server requires "username:password@host" in every turn: URL.\n${invalid.join("\n")}';
++                    });
++                    return;
++                  }
++                  Navigator.pop(context, controller.text);
++                },
++                child: const Text('Save'),
++              ),
++            ],
++          );
++        },
 +      );
 +    },
 +  );
@@ -444,6 +895,29 @@ index a2b92fc..2b96273 100644
 +
 +  await ref.read(persistenceProvider).setStunServers(nextServers);
 +  ref.redux(signalingProvider).dispatch(SetStunServersAction(nextServers));
++}
++
++List<String> _parseIceServers(String input) {
++  return input
++      .split('\n')
++      .map((server) => server.trim())
++      .where((server) => server.isNotEmpty)
++      .toSet()
++      .toList();
++}
++
++String? _invalidIceServerError(String server) {
++  final normalized = server.trim().toLowerCase();
++  if (!normalized.startsWith('turn:') && !normalized.startsWith('turns:')) {
++    return null;
++  }
++
++  final hasCredentials = RegExp(
++    r'^turns?://?[^@/?#:]+:[^@/?#]+@',
++  ).hasMatch(normalized);
++  return hasCredentials
++      ? null
++      : 'Invalid TURN URL (missing username:password@): $server';
 +}
 diff --git a/app/lib/provider/network/nearby_devices_provider.dart b/app/lib/provider/network/nearby_devices_provider.dart
 index 2141082..d0e1b11 100644
@@ -2045,7 +2519,7 @@ index fc6e878..149899b 100644
    final DeviceType deviceType;
 diff --git a/app/test/unit/model/nearby_devices_state_test.dart b/app/test/unit/model/nearby_devices_state_test.dart
 new file mode 100644
-index 0000000..54e8bc1
+index 0000000..bd76c31
 --- /dev/null
 +++ b/app/test/unit/model/nearby_devices_state_test.dart
 @@ -0,0 +1,63 @@
@@ -2137,7 +2611,7 @@ index 8e99dfa..4a26be7 100644
  webrtc-signaling = ["tokio-tungstenite"]
  webrtc = ["crypto", "flate2", "dep:webrtc", "webrtc-signaling", "x509-parser"]
 diff --git a/packages/core/src/webrtc/webrtc.rs b/packages/core/src/webrtc/webrtc.rs
-index e12a995..5093270 100644
+index e12a995..d6c055d 100644
 --- a/packages/core/src/webrtc/webrtc.rs
 +++ b/packages/core/src/webrtc/webrtc.rs
 @@ -14,6 +14,7 @@ use std::io::{Read, Write};
@@ -2169,7 +2643,7 @@ index e12a995..5093270 100644
          ..Default::default()
      };
  
-@@ -1097,6 +1098,35 @@ async fn create_peer_connection(
+@@ -1097,6 +1098,47 @@ async fn create_peer_connection(
      Ok((Arc::new(peer_connection), done_rx))
  }
  
@@ -2182,29 +2656,78 @@ index e12a995..5093270 100644
 +        });
 +    }
 +
-+    let url = Url::parse(server)
-+        .map_err(|e| anyhow::anyhow!("Invalid ICE server URL: {e}"))?;
-+    let scheme = url.scheme();
++    let url = Url::parse(server).map_err(|e| anyhow::anyhow!("Invalid ICE server URL: {e}"))?;
++    if !matches!(url.scheme(), "turn" | "turns") {
++        return Ok(RTCIceServer {
++            urls: vec![server.to_owned()],
++            ..Default::default()
++        });
++    }
 +
-+    let username = url.username().to_owned();
-+    let credential = url.password().unwrap_or_default().to_owned();
++    let (_, rest) = server.split_once(':').ok_or_else(|| turn_credential_error(server))?;
++    let rest = rest.strip_prefix("//").unwrap_or(rest);
++    let (userinfo, _) = rest.rsplit_once('@').ok_or_else(|| turn_credential_error(server))?;
++    let (username, credential) = userinfo.split_once(':').ok_or_else(|| turn_credential_error(server))?;
 +
-+    let is_turn = matches!(scheme, "turn" | "turns");
 +    anyhow::ensure!(
-+        !is_turn || (!username.is_empty() && !credential.is_empty()),
-+        "TURN server requires a username and credential"
++        !username.is_empty() && !credential.is_empty(),
++        "{}",
++        turn_credential_error(server)
 +    );
 +
 +    Ok(RTCIceServer {
 +        urls: vec![server.to_owned()],
-+        username: if is_turn { username } else { String::new() },
-+        credential: if is_turn { credential } else { String::new() },
++        username: username.to_owned(),
++        credential: credential.to_owned(),
 +    })
++}
++
++fn turn_credential_error(server: &str) -> anyhow::Error {
++    anyhow::anyhow!(
++        "TURN server requires a username and credential in the URL: expected turn:username:password@host:port, got {server}"
++    )
 +}
 +
  async fn receive_nonce(receive_rx: &mut mpsc::Receiver<DataChannelMessage>) -> Result<Vec<u8>> {
      let remote_nonce = match receive_rx.recv().await {
          Some(msg) => {
+@@ -1425,4 +1467,36 @@ mod tests {
+ 
+         assert_eq!(response, decoded);
+     }
++
++    #[test]
++    fn parse_ice_server_supports_stun() {
++        let server = parse_ice_server("stun:relay.example.com:3478").unwrap();
++        assert_eq!(server.urls, vec!["stun:relay.example.com:3478"]);
++        assert!(server.username.is_empty());
++        assert!(server.credential.is_empty());
++    }
++
++    #[test]
++    fn parse_ice_server_reads_turn_credentials() {
++        let server =
++            parse_ice_server("turn:relay:change-me@relay.example.com:3478?transport=tcp").unwrap();
++
++        assert_eq!(
++            server.urls,
++            vec!["turn:relay:change-me@relay.example.com:3478?transport=tcp"]
++        );
++        assert_eq!(server.username, "relay");
++        assert_eq!(server.credential, "change-me");
++    }
++
++    #[test]
++    fn parse_ice_server_rejects_turn_without_credentials() {
++        let error = parse_ice_server("turn:relay.example.com:3478")
++            .err()
++            .expect("missing credentials should fail");
++        let message = error.to_string();
++
++        assert!(message.contains("username and credential"));
++        assert!(message.contains("turn:username:password@host:port"));
++    }
+ }
 diff --git a/server/Cargo.toml b/server/Cargo.toml
 index 6c448e0..83e9cf7 100644
 --- a/server/Cargo.toml
@@ -2234,10 +2757,10 @@ index 9bef482..f65ff8e 100644
 +EXPOSE 18080
  ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..5fbd3b0 100644
+index 07b8b65..eafa5dd 100644
 --- a/server/README.md
 +++ b/server/README.md
-@@ -1,3 +1,98 @@
+@@ -1,3 +1,103 @@
  # LocalSend Signaling Server
  
 -A signaling server for LocalSend. Using Rust and WebSockets.
@@ -2330,10 +2853,15 @@ index 07b8b65..5fbd3b0 100644
 +## 媒体兜底
 +
 +内网或同一 NAT 下可直连的设备会优先建立 P2P 通道。跨网络无法直连时，需要配置
-+公网 TURN 服务，例如 coturn，并在客户端 ICE server 中加入：
++公网 TURN 服务，例如 coturn。客户端在“设置 -> 网络 -> STUN/TURN server”中填入：
 +
-+- STUN：`stun:公网地址:3478`
-+- TURN：`turn:公网地址:3478`，带用户名和密码
++```text
++stun:你的域名或服务器IP:3478
++turn:用户名:密码@你的域名或服务器IP:3478?transport=tcp
++```
++
++TURN 地址中的用户名和密码必须与 coturn 的 `TURN_USER`、`TURN_PASSWORD` 一致。
++写成 `turn:域名:3478` 会得到 “TURN server requires a username and credential”。
 +
 +客户端还应配置本服务器的 WebSocket 地址作为信令服务器。
 +`docker-compose.yml` 已把 coturn 作为公网 TURN 兜底一起部署。
