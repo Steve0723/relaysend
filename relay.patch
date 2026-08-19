@@ -2611,7 +2611,7 @@ index 8e99dfa..4a26be7 100644
  webrtc-signaling = ["tokio-tungstenite"]
  webrtc = ["crypto", "flate2", "dep:webrtc", "webrtc-signaling", "x509-parser"]
 diff --git a/packages/core/src/webrtc/webrtc.rs b/packages/core/src/webrtc/webrtc.rs
-index e12a995..d6c055d 100644
+index e12a995..a13fabf 100644
 --- a/packages/core/src/webrtc/webrtc.rs
 +++ b/packages/core/src/webrtc/webrtc.rs
 @@ -14,6 +14,7 @@ use std::io::{Read, Write};
@@ -2643,7 +2643,7 @@ index e12a995..d6c055d 100644
          ..Default::default()
      };
  
-@@ -1097,6 +1098,47 @@ async fn create_peer_connection(
+@@ -1097,6 +1098,56 @@ async fn create_peer_connection(
      Ok((Arc::new(peer_connection), done_rx))
  }
  
@@ -2656,16 +2656,16 @@ index e12a995..d6c055d 100644
 +        });
 +    }
 +
-+    let url = Url::parse(server).map_err(|e| anyhow::anyhow!("Invalid ICE server URL: {e}"))?;
++    let normalized = normalize_ice_url(server);
++    let url = Url::parse(&normalized).map_err(|e| anyhow::anyhow!("Invalid ICE server URL: {e}"))?;
 +    if !matches!(url.scheme(), "turn" | "turns") {
 +        return Ok(RTCIceServer {
-+            urls: vec![server.to_owned()],
++            urls: vec![normalized.to_owned()],
 +            ..Default::default()
 +        });
 +    }
 +
-+    let (_, rest) = server.split_once(':').ok_or_else(|| turn_credential_error(server))?;
-+    let rest = rest.strip_prefix("//").unwrap_or(rest);
++    let (_, rest) = normalized.split_once(':').ok_or_else(|| turn_credential_error(server))?;
 +    let (userinfo, _) = rest.rsplit_once('@').ok_or_else(|| turn_credential_error(server))?;
 +    let (username, credential) = userinfo.split_once(':').ok_or_else(|| turn_credential_error(server))?;
 +
@@ -2676,10 +2676,19 @@ index e12a995..d6c055d 100644
 +    );
 +
 +    Ok(RTCIceServer {
-+        urls: vec![server.to_owned()],
++        urls: vec![normalized.to_owned()],
 +        username: username.to_owned(),
 +        credential: credential.to_owned(),
 +    })
++}
++
++fn normalize_ice_url(server: &str) -> String {
++    if let Some((scheme, rest)) = server.split_once(':') {
++        if rest.starts_with('/') {
++            return format!("{scheme}:{}", rest.trim_start_matches('/'));
++        }
++    }
++    server.to_owned()
 +}
 +
 +fn turn_credential_error(server: &str) -> anyhow::Error {
@@ -2691,7 +2700,7 @@ index e12a995..d6c055d 100644
  async fn receive_nonce(receive_rx: &mut mpsc::Receiver<DataChannelMessage>) -> Result<Vec<u8>> {
      let remote_nonce = match receive_rx.recv().await {
          Some(msg) => {
-@@ -1425,4 +1467,36 @@ mod tests {
+@@ -1425,4 +1476,51 @@ mod tests {
  
          assert_eq!(response, decoded);
      }
@@ -2708,6 +2717,21 @@ index e12a995..d6c055d 100644
 +    fn parse_ice_server_reads_turn_credentials() {
 +        let server =
 +            parse_ice_server("turn:relay:change-me@relay.example.com:3478?transport=tcp").unwrap();
++
++        assert_eq!(
++            server.urls,
++            vec!["turn:relay:change-me@relay.example.com:3478?transport=tcp"]
++        );
++        assert_eq!(server.username, "relay");
++        assert_eq!(server.credential, "change-me");
++    }
++
++    #[test]
++    fn parse_ice_server_normalizes_turn_url_slashes() {
++        let server = parse_ice_server(
++            "turn://relay:change-me@relay.example.com:3478?transport=tcp",
++        )
++        .unwrap();
 +
 +        assert_eq!(
 +            server.urls,
