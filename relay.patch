@@ -2781,10 +2781,10 @@ index 9bef482..f65ff8e 100644
 +EXPOSE 18080
  ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..eafa5dd 100644
+index 07b8b65..c12ad39 100644
 --- a/server/README.md
 +++ b/server/README.md
-@@ -1,3 +1,103 @@
+@@ -1,3 +1,109 @@
  # LocalSend Signaling Server
  
 -A signaling server for LocalSend. Using Rust and WebSockets.
@@ -2812,7 +2812,9 @@ index 07b8b65..eafa5dd 100644
 +| `MAX_REQUESTS_PER_IP_PER_HOUR` | `1000` | 每个来源 IP 每小时的请求上限 |
 +| `SERVER_IP` | `0.0.0.0` | 监听地址 |
 +| `SERVER_PORT` | `18080` | 监听端口 |
-+| `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
++| `SHARE_TTL_HOURS` | `24` | 临时分享链接默认保留小时数 |
++| `MIN_SHARE_TTL_MINUTES` | `5` | 临时分享链接最短有效时间（分钟） |
++| `MAX_SHARE_TTL_HOURS` | `168` | 临时分享链接最长有效时间（小时） |
 +| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
 +| `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
 +| `MAX_SHARE_UPLOADS_PER_IP_PER_HOUR` | `100` | 每个来源 IP 每小时的临时分享上传上限 |
@@ -2864,7 +2866,11 @@ index 07b8b65..eafa5dd 100644
 +http://服务器IP:18080/share
 +```
 +
-+可以粘贴文本或选择文件，提交后生成 `/s/<id>` 链接。链接默认保留 24 小时，
++可以粘贴文本或选择文件，提交后生成 `/s/<id>` 链接。链接默认保留
++`SHARE_TTL_HOURS` 小时（默认 24）。
++页面可以选择 30 分钟、1 小时、6 小时、12 小时、1 天、3 天、7 天，
++也可以输入自定义小时数。自定义有效期最短为 `MIN_SHARE_TTL_MINUTES` 分钟，
++最长为 `MAX_SHARE_TTL_HOURS` 小时；每条分享链接独立保存自己的过期时间，
 +到期后服务器自动删除文本和文件。临时分享文件默认保存在 `SHARE_DATA_DIR`。
 +
 +生产环境部署在 Nginx 后面时，Web 页面和临时链接使用：
@@ -2891,10 +2897,10 @@ index 07b8b65..eafa5dd 100644
 +`docker-compose.yml` 已把 coturn 作为公网 TURN 兜底一起部署。
 diff --git a/server/docker-compose.yml b/server/docker-compose.yml
 new file mode 100644
-index 0000000..957a6ce
+index 0000000..abdc1c2
 --- /dev/null
 +++ b/server/docker-compose.yml
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,49 @@
 +services:
 +  relaysend-server:
 +    build:
@@ -2910,6 +2916,8 @@ index 0000000..957a6ce
 +      MAX_CONNECTIONS_PER_IP: "20"
 +      MAX_REQUESTS_PER_IP_PER_HOUR: "1000"
 +      SHARE_TTL_HOURS: "24"
++      MIN_SHARE_TTL_MINUTES: "5"
++      MAX_SHARE_TTL_HOURS: "168"
 +      MAX_SHARE_SIZE_MB: "100"
 +      MAX_SHARE_FILES: "20"
 +      MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: "100"
@@ -2994,7 +3002,7 @@ index a446711..2e6f56a 100644
              })
          })?)
 diff --git a/server/src/config/state.rs b/server/src/config/state.rs
-index 4de801b..84c2b5b 100644
+index 4de801b..091d90a 100644
 --- a/server/src/config/state.rs
 +++ b/server/src/config/state.rs
 @@ -1,6 +1,8 @@
@@ -3002,11 +3010,11 @@ index 4de801b..84c2b5b 100644
  use std::collections::HashMap;
 +use std::path::PathBuf;
  use std::sync::Arc;
-+use std::time::{Duration, SystemTime};
++use std::time::SystemTime;
  use tokio::sync::{mpsc, Mutex};
  use uuid::Uuid;
  
-@@ -14,6 +16,81 @@ pub struct ClientState {
+@@ -14,6 +16,97 @@ pub struct ClientState {
  
  pub type IpRequestCountMap = Arc<Mutex<HashMap<String, u32>>>;
  
@@ -3043,7 +3051,16 @@ index 4de801b..84c2b5b 100644
 +    }
 +
 +    pub async fn get(&self, id: &Uuid) -> Option<Share> {
-+        self.shares.lock().await.get(id).cloned()
++        let share = self.shares.lock().await.get(id).cloned();
++        if let Some(share) = share {
++            if share.is_expired() {
++                self.remove(id).await;
++                return None;
++            }
++            Some(share)
++        } else {
++            None
++        }
 +    }
 +
 +    pub async fn remove(&self, id: &Uuid) {
@@ -3051,12 +3068,13 @@ index 4de801b..84c2b5b 100644
 +        let _ = tokio::fs::remove_dir_all(self.share_dir(*id)).await;
 +    }
 +
-+    pub async fn cleanup_expired(&self, ttl: Duration) -> usize {
++    pub async fn cleanup_expired(&self) -> usize {
++        let now = SystemTime::now();
 +        let expired_ids: Vec<Uuid> = {
 +            let shares = self.shares.lock().await;
 +            shares
 +                .iter()
-+                .filter(|(_, share)| share.created_at.elapsed().unwrap_or_default() >= ttl)
++                .filter(|(_, share)| now >= share.expires_at)
 +                .map(|(id, _)| *id)
 +                .collect()
 +        };
@@ -3072,9 +3090,15 @@ index 4de801b..84c2b5b 100644
 +
 +#[derive(Clone)]
 +pub struct Share {
-+    pub created_at: SystemTime,
++    pub expires_at: SystemTime,
 +    pub text: Option<String>,
 +    pub files: Vec<SharedFile>,
++}
++
++impl Share {
++    pub fn is_expired(&self) -> bool {
++        SystemTime::now() >= self.expires_at
++    }
 +}
 +
 +#[derive(Clone)]
@@ -3088,7 +3112,7 @@ index 4de801b..84c2b5b 100644
  #[derive(Clone)]
  pub struct AppState {
      /// Map of peer IDs to WebSocket message senders.
-@@ -21,6 +98,15 @@ pub struct AppState {
+@@ -21,6 +114,15 @@ pub struct AppState {
  
      /// Map of IP addresses to the number of requests.
      pub request_count_map: IpRequestCountMap,
@@ -3104,7 +3128,7 @@ index 4de801b..84c2b5b 100644
  }
  
  impl AppState {
-@@ -28,6 +114,9 @@ impl AppState {
+@@ -28,6 +130,9 @@ impl AppState {
          Self {
              tx_map: Arc::new(Mutex::new(HashMap::new())),
              request_count_map: Arc::new(Mutex::new(HashMap::new())),
@@ -3123,10 +3147,10 @@ index 60da579..8c65e47 100644
  pub(crate) mod ws_controller;
 diff --git a/server/src/controller/share_controller.rs b/server/src/controller/share_controller.rs
 new file mode 100644
-index 0000000..d96f592
+index 0000000..9cb437d
 --- /dev/null
 +++ b/server/src/controller/share_controller.rs
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,1177 @@
 +use crate::config::error::AppError;
 +use crate::config::state::{AppState, Share, ShareStore, SharedFile};
 +use crate::util::ip::get_client_ip;
@@ -3136,7 +3160,7 @@ index 0000000..d96f592
 +use std::fmt::Write as _;
 +use std::net::{IpAddr, SocketAddr};
 +use std::sync::LazyLock;
-+use std::time::{Duration, SystemTime};
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
 +use tokio::time::sleep;
 +use uuid::Uuid;
 +
@@ -3167,6 +3191,21 @@ index 0000000..d96f592
 +        .ok()
 +        .and_then(|value| value.parse::<u64>().ok())
 +        .unwrap_or(24)
++});
++
++static MAX_SHARE_TTL_HOURS: LazyLock<u64> = LazyLock::new(|| {
++    std::env::var("MAX_SHARE_TTL_HOURS")
++        .ok()
++        .and_then(|value| value.parse::<u64>().ok())
++        .unwrap_or(168)
++        .max(*SHARE_TTL_HOURS)
++});
++
++static MIN_SHARE_TTL_MINUTES: LazyLock<u64> = LazyLock::new(|| {
++    std::env::var("MIN_SHARE_TTL_MINUTES")
++        .ok()
++        .and_then(|value| value.parse::<u64>().ok())
++        .unwrap_or(5)
 +});
 +
 +pub async fn root() -> Redirect {
@@ -3203,6 +3242,8 @@ index 0000000..d96f592
 +
 +    let mut text = None;
 +    let mut files = Vec::new();
++    let mut expires = None;
++    let mut custom_hours = None;
 +
 +    while let Some(mut field) = multipart
 +        .next_field()
@@ -3219,6 +3260,20 @@ index 0000000..d96f592
 +                if !value.is_empty() {
 +                    text = Some(value);
 +                }
++            }
++            "expires" => {
++                let value = field
++                    .text()
++                    .await
++                    .map_err(|error| share_error(StatusCode::BAD_REQUEST, error.to_string()))?;
++                expires = Some(value);
++            }
++            "custom_hours" => {
++                let value = field
++                    .text()
++                    .await
++                    .map_err(|error| share_error(StatusCode::BAD_REQUEST, error.to_string()))?;
++                custom_hours = Some(value);
 +            }
 +            "files" => {
 +                if files.len() >= *MAX_SHARE_FILES {
@@ -3273,12 +3328,18 @@ index 0000000..d96f592
 +        ));
 +    }
 +
++    let ttl = parse_share_ttl(expires, custom_hours)?;
++    let now = SystemTime::now();
++    let expires_at = now
++        .checked_add(ttl)
++        .ok_or_else(|| share_error(StatusCode::BAD_REQUEST, "Expiration is too large"))?;
++
 +    state
 +        .share_store
 +        .insert(
 +            share_id,
 +            Share {
-+                created_at: SystemTime::now(),
++                expires_at,
 +                text,
 +                files,
 +            },
@@ -3335,10 +3396,9 @@ index 0000000..d96f592
 +
 +pub fn spawn_share_cleanup(store: ShareStore) {
 +    tokio::spawn(async move {
-+        let ttl = Duration::from_secs(*SHARE_TTL_HOURS * 3600);
 +        loop {
 +            sleep(Duration::from_secs(60)).await;
-+            let removed = store.cleanup_expired(ttl).await;
++            let removed = store.cleanup_expired().await;
 +            if removed > 0 {
 +                tracing::info!("Removed {removed} expired temporary shares");
 +            }
@@ -3350,130 +3410,863 @@ index 0000000..d96f592
 +    AppError::status(status, Some(message.into()))
 +}
 +
++fn parse_share_ttl(
++    expires: Option<String>,
++    custom_hours: Option<String>,
++) -> Result<Duration, AppError> {
++    let default_ttl = Duration::from_secs(*SHARE_TTL_HOURS * 3600);
++    let raw = match expires {
++        Some(value) => value.trim().to_owned(),
++        None => return Ok(default_ttl),
++    };
++    if raw.is_empty() {
++        return Ok(default_ttl);
++    }
++
++    let minutes = if raw.eq_ignore_ascii_case("custom") {
++        let raw_hours = custom_hours.as_deref().unwrap_or("").trim();
++        if raw_hours.is_empty() {
++            return Err(share_error(
++                StatusCode::BAD_REQUEST,
++                "Custom expiration must include hours, for example 2.5",
++            ));
++        }
++        let hours: f64 = raw_hours.parse().map_err(|_| {
++            share_error(
++                StatusCode::BAD_REQUEST,
++                "Custom expiration must be a number of hours, for example 2.5",
++            )
++        })?;
++        if !hours.is_finite() || hours <= 0.0 {
++            return Err(share_error(
++                StatusCode::BAD_REQUEST,
++                "Custom expiration must be greater than 0",
++            ));
++        }
++        (hours * 60.0).round() as u64
++    } else {
++        raw.parse::<u64>()
++            .map_err(|_| share_error(StatusCode::BAD_REQUEST, "Invalid expiration value"))?
++    };
++
++    let min_minutes = *MIN_SHARE_TTL_MINUTES;
++    let max_minutes = *MAX_SHARE_TTL_HOURS * 60;
++    if minutes < min_minutes || minutes > max_minutes {
++        return Err(share_error(
++            StatusCode::BAD_REQUEST,
++            format!("Expiration must be between {min_minutes} minutes and {max_minutes} minutes"),
++        ));
++    }
++
++    Ok(Duration::from_secs(minutes * 60))
++}
++
 +fn share_page_html() -> String {
-+    let max_mb = *MAX_SHARE_BYTES / (1024 * 1024);
-+    format!(
-+        r#"<!doctype html>
-+<html lang="en">
++    const PAGE: &str = r#"<!doctype html>
++<html lang="zh-CN">
 +<head>
 +  <meta charset="utf-8">
 +  <meta name="viewport" content="width=device-width, initial-scale=1">
-+  <title>RelaySend Temporary Share</title>
++  <meta name="color-scheme" content="light dark">
++  <title>RelaySend 临时分享</title>
 +  <style>
-+    :root {{
++    :root {
 +      color-scheme: light dark;
-+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-+      line-height: 1.5;
-+    }}
-+    body {{ max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }}
-+    h1 {{ margin-top: 0; }}
-+    form {{ display: grid; gap: 14px; }}
-+    textarea, input[type="file"], button {{ width: 100%; box-sizing: border-box; }}
-+    textarea {{ min-height: 140px; padding: 10px; border-radius: 8px; }}
-+    button {{ padding: 10px 14px; font-weight: 600; border-radius: 8px; cursor: pointer; }}
-+    .meta {{ color: #777; font-size: 14px; }}
-+    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 12px; border-radius: 8px; }}
-+    a {{ color: #0b6bcb; }}
++      --bg: #f4f6f1;
++      --surface: #ffffff;
++      --surface-2: #f0f3ec;
++      --border: #dce3d8;
++      --text: #18211b;
++      --muted: #65726a;
++      --accent: #0f9d6c;
++      --accent-strong: #0b7f57;
++      --accent-soft: #e6f6ee;
++      --danger: #b3543f;
++      --shadow: 0 20px 55px rgba(23, 34, 27, 0.09);
++      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
++    }
++    @media (prefers-color-scheme: dark) {
++      :root {
++        --bg: #101713;
++        --surface: #1a241f;
++        --surface-2: #222d27;
++        --border: #304039;
++        --text: #eef6f1;
++        --muted: #9eaea4;
++        --accent: #35d79b;
++        --accent-strong: #4be3ad;
++        --accent-soft: #173629;
++        --danger: #f0927c;
++        --shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
++      }
++    }
++    * { box-sizing: border-box; }
++    body {
++      margin: 0;
++      min-height: 100vh;
++      background: var(--bg);
++      color: var(--text);
++      line-height: 1.6;
++    }
++    .main {
++      width: min(100%, 820px);
++      margin: 0 auto;
++      padding: 36px 20px 72px;
++    }
++    .topbar {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 14px;
++      margin-bottom: 34px;
++    }
++    .brand {
++      display: flex;
++      align-items: center;
++      gap: 10px;
++      font-size: 15px;
++      font-weight: 700;
++      letter-spacing: 0;
++    }
++    .brand-mark {
++      width: 38px;
++      height: 38px;
++      border-radius: 11px;
++      display: grid;
++      place-items: center;
++      background: var(--accent);
++      color: #ffffff;
++      font-weight: 800;
++      letter-spacing: 0;
++      box-shadow: 0 8px 22px rgba(15, 157, 108, 0.28);
++    }
++    .pill {
++      display: inline-flex;
++      align-items: center;
++      gap: 7px;
++      padding: 7px 13px;
++      border: 1px solid var(--border);
++      border-radius: 999px;
++      background: var(--surface);
++      color: var(--muted);
++      font-size: 13px;
++      font-weight: 600;
++    }
++    .pill::before {
++      content: "";
++      width: 7px;
++      height: 7px;
++      border-radius: 50%;
++      background: var(--accent);
++    }
++    .hero { margin-bottom: 28px; }
++    .hero h1 {
++      margin: 0 0 10px;
++      font-size: clamp(30px, 5vw, 46px);
++      line-height: 1.15;
++      letter-spacing: 0;
++    }
++    .hero p {
++      margin: 0;
++      color: var(--muted);
++      font-size: 16px;
++    }
++    .card {
++      background: var(--surface);
++      border: 1px solid var(--border);
++      border-radius: 18px;
++      padding: 26px;
++      box-shadow: var(--shadow);
++    }
++    .field { margin-bottom: 22px; }
++    .field > label, .card-heading h2 {
++      display: block;
++      margin: 0 0 9px;
++      font-size: 14px;
++      font-weight: 700;
++    }
++    textarea {
++      width: 100%;
++      min-height: 150px;
++      padding: 14px;
++      border: 1px solid var(--border);
++      border-radius: 13px;
++      background: var(--surface-2);
++      color: var(--text);
++      font: inherit;
++      resize: vertical;
++      outline: none;
++      transition: border-color 0.15s ease, box-shadow 0.15s ease;
++    }
++    textarea:focus, input:focus {
++      border-color: var(--accent);
++      box-shadow: 0 0 0 4px var(--accent-soft);
++    }
++    .dropzone {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 16px;
++      padding: 18px;
++      border: 1.5px dashed var(--border);
++      border-radius: 13px;
++      background: var(--surface-2);
++      transition: border-color 0.15s ease, background 0.15s ease;
++    }
++    .dropzone.dragging {
++      border-color: var(--accent);
++      background: var(--accent-soft);
++    }
++    .drop-title {
++      font-weight: 700;
++      margin-bottom: 3px;
++    }
++    .drop-meta, .field-hint {
++      margin: 0;
++      color: var(--muted);
++      font-size: 13px;
++    }
++    .file-button {
++      flex: 0 0 auto;
++      padding: 9px 15px;
++      border: 1px solid var(--border);
++      border-radius: 10px;
++      background: var(--surface);
++      color: var(--text);
++      font-size: 13px;
++      font-weight: 700;
++      cursor: pointer;
++    }
++    .file-list { display: none; margin-top: 12px; }
++    .file-list.visible { display: grid; gap: 8px; }
++    .file-chip {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 12px;
++      padding: 10px 13px;
++      border: 1px solid var(--border);
++      border-radius: 10px;
++      background: var(--surface);
++      font-size: 13px;
++    }
++    .file-chip span:last-child { color: var(--muted); white-space: nowrap; }
++    .expiry-grid {
++      display: grid;
++      grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
++      gap: 10px;
++    }
++    .expiry-option { position: relative; }
++    .expiry-option input {
++      position: absolute;
++      opacity: 0;
++      pointer-events: none;
++    }
++    .expiry-option span {
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      min-height: 44px;
++      padding: 10px;
++      border: 1px solid var(--border);
++      border-radius: 11px;
++      background: var(--surface);
++      color: var(--muted);
++      font-size: 13px;
++      font-weight: 700;
++      text-align: center;
++      cursor: pointer;
++      transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
++    }
++    .expiry-option input:checked + span {
++      border-color: var(--accent);
++      background: var(--accent-soft);
++      color: var(--accent-strong);
++    }
++    .custom-row { display: none; margin-top: 12px; }
++    .custom-row.visible { display: block; }
++    .custom-row input {
++      width: 100%;
++      margin-top: 8px;
++      padding: 11px 13px;
++      border: 1px solid var(--border);
++      border-radius: 11px;
++      background: var(--surface-2);
++      color: var(--text);
++      font: inherit;
++      outline: none;
++    }
++    .submit {
++      width: 100%;
++      padding: 14px 18px;
++      border: 0;
++      border-radius: 13px;
++      background: var(--accent);
++      color: #ffffff;
++      font: inherit;
++      font-size: 15px;
++      font-weight: 800;
++      cursor: pointer;
++      transition: background 0.15s ease, transform 0.12s ease;
++    }
++    .submit:hover { background: var(--accent-strong); }
++    .submit:active { transform: translateY(1px); }
++    .footer-note {
++      margin: 18px 0 0;
++      color: var(--muted);
++      font-size: 13px;
++      text-align: center;
++    }
++    @media (max-width: 620px) {
++      .main { padding-top: 24px; }
++      .topbar { margin-bottom: 24px; }
++      .card { padding: 20px; }
++      .dropzone { align-items: flex-start; flex-direction: column; }
++      .file-button { width: 100%; text-align: center; }
++    }
 +  </style>
 +</head>
 +<body>
-+  <main>
-+    <h1>RelaySend Temporary Share</h1>
-+    <p>Share text or files without installing the app. Links expire after {ttl} hours.</p>
-+    <form action="/share" method="post" enctype="multipart/form-data">
-+      <div>
-+        <label for="text">Text</label>
-+        <textarea id="text" name="text" placeholder="Paste or type text here"></textarea>
-+      </div>
-+      <div>
-+        <label for="files">Files</label>
-+        <input id="files" name="files" type="file" multiple>
-+      </div>
-+      <p class="meta">Maximum {max_mb} MB per share, {max_files} files. Text and files are deleted automatically.</p>
-+      <button type="submit">Create share link</button>
-+    </form>
++  <main class="main">
++    <header class="topbar">
++      <div class="brand"><div class="brand-mark">RS</div><span>RelaySend</span></div>
++      <span class="pill">临时分享</span>
++    </header>
++    <section class="hero">
++      <h1>创建临时分享</h1>
++      <p>分享文本或文件，链接到期后立即失效并自动删除。</p>
++    </section>
++    <section class="card">
++      <form action="/share" method="post" enctype="multipart/form-data">
++        <div class="field">
++          <label for="text">文本</label>
++          <textarea id="text" name="text" placeholder="粘贴或输入要分享的内容"></textarea>
++        </div>
++        <div class="field">
++          <label>文件</label>
++          <div class="dropzone" id="dropzone">
++            <div>
++              <div class="drop-title">选择文件或拖拽到这里</div>
++              <p class="drop-meta">单次最多 __MAX_FILES__ 个文件，总大小不超过 __MAX_MB__ MB</p>
++            </div>
++            <label class="file-button" for="files">选择文件</label>
++            <input id="files" name="files" type="file" multiple hidden>
++          </div>
++          <div id="file-list" class="file-list" aria-live="polite"></div>
++        </div>
++        <div class="field">
++          <label>链接有效期</label>
++          <div class="expiry-grid">
++            <label class="expiry-option"><input type="radio" name="expires" value="30" checked><span>30 分钟</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="60"><span>1 小时</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="360"><span>6 小时</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="720"><span>12 小时</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="1440"><span>1 天</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="4320"><span>3 天</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="10080"><span>7 天</span></label>
++            <label class="expiry-option"><input type="radio" name="expires" value="custom"><span>自定义</span></label>
++          </div>
++          <div class="custom-row" id="custom-row">
++            <label for="custom_hours">自定义时长（小时）</label>
++            <input id="custom_hours" name="custom_hours" type="number" min="0.1" max="__MAX_TTL_HOURS__" step="0.5" placeholder="例如 2.5">
++            <p class="field-hint">最短 __MIN_TTL_MINUTES__ 分钟，最长 __MAX_TTL_HOURS__ 小时</p>
++          </div>
++        </div>
++        <button class="submit" type="submit">创建分享链接</button>
++      </form>
++    </section>
++    <p class="footer-note">不选择有效期时，链接默认保留 __TTL_HOURS__ 小时。</p>
 +  </main>
++  <script>
++    const fileInput = document.getElementById('files');
++    const dropzone = document.getElementById('dropzone');
++    const fileList = document.getElementById('file-list');
++
++    function formatBytes(bytes) {
++      if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
++      if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
++      if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
++      return bytes + ' B';
++    }
++
++    function updateFileList() {
++      fileList.textContent = '';
++      const files = Array.from(fileInput.files || []);
++      if (!files.length) {
++        fileList.classList.remove('visible');
++        return;
++      }
++      fileList.classList.add('visible');
++      files.forEach((file) => {
++        const chip = document.createElement('div');
++        chip.className = 'file-chip';
++        const name = document.createElement('span');
++        name.textContent = file.name;
++        const size = document.createElement('span');
++        size.textContent = formatBytes(file.size);
++        chip.append(name, size);
++        fileList.appendChild(chip);
++      });
++    }
++
++    ['dragenter', 'dragover'].forEach((eventName) => {
++      dropzone.addEventListener(eventName, (event) => {
++        event.preventDefault();
++        dropzone.classList.add('dragging');
++      });
++    });
++    ['dragleave', 'drop'].forEach((eventName) => {
++      dropzone.addEventListener(eventName, (event) => {
++        event.preventDefault();
++        dropzone.classList.remove('dragging');
++      });
++    });
++    dropzone.addEventListener('drop', (event) => {
++      if (event.dataTransfer.files.length) {
++        fileInput.files = event.dataTransfer.files;
++        updateFileList();
++      }
++    });
++    fileInput.addEventListener('change', updateFileList);
++
++    const customRadio = document.querySelector('input[name="expires"][value="custom"]');
++    const customHours = document.getElementById('custom_hours');
++    const customRow = document.getElementById('custom-row');
++    function updateCustomRow() {
++      const visible = customRadio.checked;
++      customRow.classList.toggle('visible', visible);
++      customHours.disabled = !visible;
++    }
++    document.querySelectorAll('input[name="expires"]').forEach((radio) => {
++      radio.addEventListener('change', updateCustomRow);
++    });
++    updateCustomRow();
++  </script>
 +</body>
-+</html>
-+"#,
-+        ttl = *SHARE_TTL_HOURS,
-+        max_mb = max_mb,
-+        max_files = *MAX_SHARE_FILES,
-+    )
++</html>"#;
++
++    PAGE.replace("__MAX_FILES__", &MAX_SHARE_FILES.to_string())
++        .replace(
++            "__MAX_MB__",
++            &(*MAX_SHARE_BYTES / (1024 * 1024)).to_string(),
++        )
++        .replace("__MAX_TTL_HOURS__", &MAX_SHARE_TTL_HOURS.to_string())
++        .replace("__MIN_TTL_MINUTES__", &MIN_SHARE_TTL_MINUTES.to_string())
++        .replace("__TTL_HOURS__", &SHARE_TTL_HOURS.to_string())
 +}
 +
 +fn view_share_html(id: Uuid, share: Share) -> String {
-+    let ttl = Duration::from_secs(*SHARE_TTL_HOURS * 3600);
-+    let elapsed = share.created_at.elapsed().unwrap_or_default();
-+    let remaining = ttl.saturating_sub(elapsed);
-+    let remaining_hours = remaining.as_secs() / 3600;
-+    let remaining_minutes = (remaining.as_secs() % 3600) / 60;
++    const PAGE: &str = r#"<!doctype html>
++<html lang="zh-CN">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <meta name="color-scheme" content="light dark">
++  <title>RelaySend 分享</title>
++  <style>
++    :root {
++      color-scheme: light dark;
++      --bg: #f4f6f1;
++      --surface: #ffffff;
++      --surface-2: #f0f3ec;
++      --border: #dce3d8;
++      --text: #18211b;
++      --muted: #65726a;
++      --accent: #0f9d6c;
++      --accent-strong: #0b7f57;
++      --accent-soft: #e6f6ee;
++      --shadow: 0 20px 55px rgba(23, 34, 27, 0.09);
++      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
++    }
++    @media (prefers-color-scheme: dark) {
++      :root {
++        --bg: #101713;
++        --surface: #1a241f;
++        --surface-2: #222d27;
++        --border: #304039;
++        --text: #eef6f1;
++        --muted: #9eaea4;
++        --accent: #35d79b;
++        --accent-strong: #4be3ad;
++        --accent-soft: #173629;
++        --shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
++      }
++    }
++    * { box-sizing: border-box; }
++    body {
++      margin: 0;
++      min-height: 100vh;
++      background: var(--bg);
++      color: var(--text);
++      line-height: 1.6;
++      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
++    }
++    .main {
++      width: min(100%, 820px);
++      margin: 0 auto;
++      padding: 36px 20px 72px;
++    }
++    .topbar {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 14px;
++      margin-bottom: 34px;
++    }
++    .brand {
++      display: flex;
++      align-items: center;
++      gap: 10px;
++      font-size: 15px;
++      font-weight: 700;
++      letter-spacing: 0;
++    }
++    .brand-mark {
++      width: 38px;
++      height: 38px;
++      border-radius: 11px;
++      display: grid;
++      place-items: center;
++      background: var(--accent);
++      color: #ffffff;
++      font-weight: 800;
++      letter-spacing: 0;
++      box-shadow: 0 8px 22px rgba(15, 157, 108, 0.28);
++    }
++    .pill {
++      display: inline-flex;
++      align-items: center;
++      gap: 7px;
++      padding: 7px 13px;
++      border: 1px solid var(--border);
++      border-radius: 999px;
++      background: var(--surface);
++      color: var(--muted);
++      font-size: 13px;
++      font-weight: 600;
++    }
++    .pill::before {
++      content: "";
++      width: 7px;
++      height: 7px;
++      border-radius: 50%;
++      background: var(--accent);
++    }
++    .hero { margin-bottom: 24px; }
++    .badge {
++      display: inline-flex;
++      align-items: center;
++      gap: 8px;
++      margin-bottom: 14px;
++      padding: 7px 12px;
++      border-radius: 999px;
++      background: var(--accent-soft);
++      color: var(--accent-strong);
++      font-size: 13px;
++      font-weight: 700;
++    }
++    .badge-dot {
++      width: 7px;
++      height: 7px;
++      border-radius: 50%;
++      background: var(--accent);
++    }
++    .hero h1 {
++      margin: 0 0 10px;
++      font-size: clamp(30px, 5vw, 44px);
++      line-height: 1.15;
++      letter-spacing: 0;
++    }
++    .hero p {
++      margin: 0;
++      color: var(--muted);
++      font-size: 16px;
++    }
++    .countdown-card {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 18px;
++      margin: 24px 0 16px;
++      padding: 22px;
++      border: 1px solid var(--border);
++      border-radius: 16px;
++      background: var(--surface);
++      box-shadow: var(--shadow);
++    }
++    .countdown-label, .expires-at {
++      color: var(--muted);
++      font-size: 13px;
++    }
++    .countdown {
++      margin: 4px 0 0;
++      color: var(--text);
++      font-size: clamp(26px, 4vw, 36px);
++      font-weight: 800;
++      line-height: 1.1;
++      font-variant-numeric: tabular-nums;
++      letter-spacing: 0;
++    }
++    .copy-button {
++      flex: 0 0 auto;
++      padding: 12px 22px;
++      border: 0;
++      border-radius: 12px;
++      background: var(--accent);
++      color: #ffffff;
++      font: inherit;
++      font-size: 14px;
++      font-weight: 800;
++      cursor: pointer;
++      transition: background 0.15s ease, transform 0.12s ease;
++    }
++    .copy-button:hover { background: var(--accent-strong); }
++    .copy-button:active { transform: translateY(1px); }
++    .content-card {
++      margin-top: 16px;
++      padding: 22px;
++      border: 1px solid var(--border);
++      border-radius: 16px;
++      background: var(--surface);
++      box-shadow: var(--shadow);
++    }
++    .card-heading {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      gap: 12px;
++      margin-bottom: 14px;
++    }
++    .card-heading h2 {
++      margin: 0;
++      font-size: 16px;
++    }
++    .section-tag {
++      color: var(--muted);
++      font-size: 12px;
++      font-weight: 700;
++    }
++    .share-text {
++      margin: 0;
++      padding: 16px;
++      border-radius: 12px;
++      background: var(--surface-2);
++      white-space: pre-wrap;
++      word-break: break-word;
++      overflow-wrap: anywhere;
++      font-size: 14px;
++    }
++    .file-grid {
++      display: grid;
++      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
++      gap: 10px;
++    }
++    .file-card {
++      display: block;
++      padding: 15px;
++      border: 1px solid var(--border);
++      border-radius: 12px;
++      background: var(--surface-2);
++      color: var(--text);
++      text-decoration: none;
++      transition: border-color 0.15s ease, transform 0.12s ease;
++    }
++    .file-card:hover {
++      border-color: var(--accent);
++      transform: translateY(-1px);
++    }
++    .file-name {
++      display: block;
++      font-weight: 700;
++      overflow-wrap: anywhere;
++    }
++    .file-meta {
++      display: block;
++      margin-top: 5px;
++      color: var(--muted);
++      font-size: 12px;
++    }
++    .notice {
++      display: flex;
++      gap: 10px;
++      align-items: flex-start;
++      margin-top: 18px;
++      padding: 14px 16px;
++      border: 1px solid var(--border);
++      border-radius: 12px;
++      background: var(--surface);
++      color: var(--muted);
++      font-size: 13px;
++    }
++    .notice-mark {
++      flex: 0 0 auto;
++      width: 22px;
++      height: 22px;
++      display: grid;
++      place-items: center;
++      border-radius: 50%;
++      background: var(--accent-soft);
++      color: var(--accent-strong);
++      font-weight: 800;
++    }
++    .notice p { margin: 0; }
++    @media (max-width: 620px) {
++      .main { padding-top: 24px; }
++      .topbar { margin-bottom: 24px; }
++      .countdown-card { align-items: flex-start; flex-direction: column; }
++      .copy-button { width: 100%; text-align: center; }
++      .file-grid { grid-template-columns: 1fr; }
++      .content-card { padding: 18px; }
++    }
++  </style>
++</head>
++<body>
++  <main class="main">
++    <header class="topbar">
++      <div class="brand"><div class="brand-mark">RS</div><span>RelaySend</span></div>
++      <span class="pill">分享链接已生成</span>
++    </header>
++    <section class="hero">
++      <div class="badge"><span class="badge-dot"></span>链接可用</div>
++      <h1>链接已准备好</h1>
++      <p>链接会在下方倒计时结束后自动失效，并永久删除分享内容。</p>
++      <div class="countdown-card">
++        <div>
++          <div class="countdown-label">剩余有效时间</div>
++          <div id="countdown" class="countdown">__REMAINING__</div>
++          <div id="expires-at" class="expires-at"></div>
++        </div>
++        <button id="copy" class="copy-button" type="button">复制链接</button>
++      </div>
++    </section>
++    __TEXT_HTML__
++    __FILES_HTML__
++    <section class="notice">
++      <span class="notice-mark">i</span>
++      <p>请仅发送给可信的人。链接内容到期后由服务器自动删除，本页面也会停止显示倒计时。</p>
++    </section>
++  </main>
++  <script>
++    const expiresAt = Number('__EXPIRES_AT_UNIX__') * 1000;
++    const countdown = document.getElementById('countdown');
++    const copyButton = document.getElementById('copy');
 +
-+    let text_html = share.text.as_deref().map_or_else(String::new, |text| {
-+        format!(
-+            "<section><h2>Text</h2><pre>{}</pre></section>",
-+            html_escape(text)
-+        )
++    function formatDuration(totalSeconds) {
++      if (totalSeconds <= 0) return '已过期';
++      const days = Math.floor(totalSeconds / 86400);
++      const hours = Math.floor((totalSeconds % 86400) / 3600);
++      const minutes = Math.floor((totalSeconds % 3600) / 60);
++      const seconds = totalSeconds % 60;
++      if (days > 0) return days + ' 天 ' + hours + ' 小时 ' + minutes + ' 分钟';
++      if (hours > 0) return hours + ' 小时 ' + minutes + ' 分钟';
++      if (minutes > 0) return minutes + ' 分钟 ' + seconds + ' 秒';
++      return seconds + ' 秒';
++    }
++
++    function updateCountdown() {
++      const remainingMs = Math.max(0, expiresAt - Date.now());
++      countdown.textContent = formatDuration(Math.floor(remainingMs / 1000));
++      if (remainingMs <= 0) {
++        clearInterval(timer);
++      }
++    }
++    const timer = setInterval(updateCountdown, 1000);
++    updateCountdown();
++    document.getElementById('expires-at').textContent = '过期时间：' + new Date(expiresAt).toLocaleString();
++
++    function fallbackCopy() {
++      const input = document.createElement('textarea');
++      input.value = location.href;
++      input.style.position = 'fixed';
++      input.style.opacity = '0';
++      document.body.appendChild(input);
++      input.select();
++      try {
++        document.execCommand('copy');
++      } catch (_) {}
++      document.body.removeChild(input);
++    }
++
++    copyButton.addEventListener('click', () => {
++      const done = () => {
++        copyButton.textContent = '已复制';
++        setTimeout(() => { copyButton.textContent = '复制链接'; }, 1600);
++      };
++      if (navigator.clipboard && navigator.clipboard.writeText) {
++        navigator.clipboard.writeText(location.href).then(done).catch(() => {
++          fallbackCopy();
++          done();
++        });
++      } else {
++        fallbackCopy();
++        done();
++      }
 +    });
++  </script>
++</body>
++</html>"#;
++
++    let mut text_html = String::new();
++    if let Some(text) = share.text.as_deref() {
++        text_html = format!(
++            r#"<section class="content-card"><div class="card-heading"><h2>文本</h2><span class="section-tag">Text</span></div><pre class="share-text">{}</pre></section>"#,
++            html_escape(text)
++        );
++    }
 +
 +    let mut files_html = String::new();
 +    if !share.files.is_empty() {
-+        files_html.push_str("<section><h2>Files</h2><ul>");
++        files_html.push_str(
++            r#"<section class="content-card"><div class="card-heading"><h2>文件</h2><span class="section-tag">"#,
++        );
++        let _ = write!(
++            files_html,
++            "{} 个文件</span></div><div class=\"file-grid\">",
++            share.files.len()
++        );
 +        for file in &share.files {
 +            let _ = write!(
 +                files_html,
-+                "<li><a href=\"/s/{id}/download/{}\">{}</a> <span class=\"meta\">{}</span></li>",
++                r#"<a class="file-card" href="/s/{id}/download/{}"><span class="file-name">{}</span><span class="file-meta">{}</span></a>"#,
 +                file.index,
 +                html_escape(&file.file_name),
 +                human_size(file.size)
 +            );
 +        }
-+        files_html.push_str("</ul></section>");
++        files_html.push_str("</div></section>");
 +    }
 +
-+    format!(
-+        r#"<!doctype html>
-+<html lang="en">
-+<head>
-+  <meta charset="utf-8">
-+  <meta name="viewport" content="width=device-width, initial-scale=1">
-+  <title>RelaySend Share</title>
-+  <style>
-+    :root {{
-+      color-scheme: light dark;
-+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-+      line-height: 1.5;
-+    }}
-+    body {{ max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }}
-+    .meta {{ color: #777; font-size: 14px; }}
-+    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 12px; border-radius: 8px; }}
-+    button {{ padding: 8px 12px; border-radius: 8px; cursor: pointer; }}
-+    a {{ color: #0b6bcb; }}
-+  </style>
-+</head>
-+<body>
-+  <main>
-+    <h1>RelaySend Share</h1>
-+    <p class="meta">Link expires in {remaining_hours}h {remaining_minutes}m.</p>
-+    <button id="copy" type="button">Copy link</button>
-+    {text_html}
-+    {files_html}
-+  </main>
-+  <script>
-+    document.getElementById('copy').addEventListener('click', () => {{
-+      navigator.clipboard.writeText(location.href).then(() => {{
-+        document.getElementById('copy').textContent = 'Copied';
-+      }});
-+    }});
-+  </script>
-+</body>
-+</html>
-+"#,
-+        remaining_hours = remaining_hours,
-+        remaining_minutes = remaining_minutes,
-+        text_html = text_html,
-+        files_html = files_html,
-+    )
++    let remaining = share
++        .expires_at
++        .duration_since(SystemTime::now())
++        .unwrap_or_default();
++    let expires_at_unix = share
++        .expires_at
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_secs();
++
++    PAGE.replace("__EXPIRES_AT_UNIX__", &expires_at_unix.to_string())
++        .replace("__REMAINING__", &format_duration(remaining))
++        .replace("__TEXT_HTML__", &text_html)
++        .replace("__FILES_HTML__", &files_html)
++}
++
++fn format_duration(duration: Duration) -> String {
++    let total_secs = duration.as_secs();
++    let days = total_secs / 86400;
++    let hours = (total_secs % 86400) / 3600;
++    let minutes = (total_secs % 3600) / 60;
++    let seconds = total_secs % 60;
++    if days > 0 {
++        format!("{days} 天 {hours} 小时 {minutes} 分钟")
++    } else if hours > 0 {
++        format!("{hours} 小时 {minutes} 分钟")
++    } else if minutes > 0 {
++        format!("{minutes} 分钟 {seconds} 秒")
++    } else {
++        format!("{seconds} 秒")
++    }
 +}
 +
 +fn html_escape(value: &str) -> String {
@@ -3506,6 +4299,33 @@ index 0000000..d96f592
 +        format!("{:.1} KB", bytes as f64 / 1024.0)
 +    } else {
 +        format!("{bytes} B")
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn parse_share_ttl_accepts_preset_minutes() {
++        assert_eq!(
++            parse_share_ttl(Some("60".to_owned()), None).unwrap(),
++            Duration::from_secs(3600)
++        );
++    }
++
++    #[test]
++    fn parse_share_ttl_converts_custom_hours_to_minutes() {
++        assert_eq!(
++            parse_share_ttl(Some("custom".to_owned()), Some("2.5".to_owned())).unwrap(),
++            Duration::from_secs(150 * 60)
++        );
++    }
++
++    #[test]
++    fn parse_share_ttl_rejects_out_of_range() {
++        assert!(parse_share_ttl(Some("1".to_owned()), None).is_err());
++        assert!(parse_share_ttl(Some("custom".to_owned()), Some("100000".to_owned())).is_err());
 +    }
 +}
 diff --git a/server/src/controller/ws_controller.rs b/server/src/controller/ws_controller.rs
