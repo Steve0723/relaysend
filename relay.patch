@@ -281,7 +281,7 @@ index 99d666f..533dc96 100644
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
 diff --git a/app/lib/pages/tabs/settings_tab.dart b/app/lib/pages/tabs/settings_tab.dart
-index a2b92fc..9dd9708 100644
+index a2b92fc..3879b93 100644
 --- a/app/lib/pages/tabs/settings_tab.dart
 +++ b/app/lib/pages/tabs/settings_tab.dart
 @@ -1,5 +1,3 @@
@@ -913,7 +913,7 @@ index a2b92fc..9dd9708 100644
 +  }
 +
 +  final hasCredentials = RegExp(
-+    r'^turns?://?[^@/?#:]+:[^@/?#]+@',
++    r'^turns?:/{0,2}[^@/?#:]+:[^@/?#]+@',
 +  ).hasMatch(normalized);
 +  return hasCredentials
 +      ? null
