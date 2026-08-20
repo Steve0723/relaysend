@@ -96,9 +96,14 @@ Docker Compose 会同时启动 RelaySend 信令服务和 coturn。首次使用�
 | `ROOM_MODE` | `global` | `ip` 按来源 IP 分组，`global` 使用同一个大厅 |
 | `SERVER_PORT` | `18080` | 监听端口 |
 | `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
+| `MIN_SHARE_TTL_MINUTES` | `5` | 临时分享链接最短有效时间（分钟） |
+| `MAX_SHARE_TTL_HOURS` | `168` | 临时分享链接最长有效时间（小时） |
 | `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
 | `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
 | `SHARE_DATA_DIR` | `./share-data` | 临时分享文件存储目录 |
+| `SHARE_AUTH_USERS` | 空 | 分享登录账号，多个用逗号分隔，格式 `user1:pass1,user2:pass2` |
+| `SHARE_AUTH_USERNAME` | `admin` | 单账号模式分享用户名 |
+| `SHARE_AUTH_PASSWORD` | 随机生成 | 单账号模式分享密码 |
 
 ### Nginx 反向代理示例
 
@@ -128,6 +133,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -158,8 +164,12 @@ turn:用户名:密码@relay.example.com:3478?transport=tcp
 http://服务器IP:18080/share
 ```
 
-粘贴文本或选择文件后提交，会生成 `/s/<id>` 链接。临时链接默认保留 24 小时，
-服务端会自动清理，文件不会永久保存。
+分享者需要先登录（HTTP Basic Auth），账号由服务器管理员预置，不开放注册。
+`deploy.sh` 会在服务器本地 `.env` 中生成 `SHARE_AUTH_USERNAME` 和
+`SHARE_AUTH_PASSWORD`（默认用户名 `admin`）；用 `SHARE_AUTH_USERS` 可以一次配置
+多个账号。收到 `/s/<id>` 链接的接收者不需要登录。粘贴文本或选择文件后提交，
+会生成 `/s/<id>` 链接。临时链接默认保留 24 小时，服务端会自动清理，
+文件不会永久保存。
 
 使用 HTTPS 域名时，网页分享地址为：
 

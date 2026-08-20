@@ -13,10 +13,15 @@ services:
       MAX_CONNECTIONS_PER_IP: "20"
       MAX_REQUESTS_PER_IP_PER_HOUR: "1000"
       SHARE_TTL_HOURS: "24"
+      MIN_SHARE_TTL_MINUTES: "5"
+      MAX_SHARE_TTL_HOURS: "168"
       MAX_SHARE_SIZE_MB: "100"
       MAX_SHARE_FILES: "20"
       MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: "100"
       SHARE_DATA_DIR: /data/shares
+      SHARE_AUTH_USERS: ${SHARE_AUTH_USERS:-}
+      SHARE_AUTH_USERNAME: ${SHARE_AUTH_USERNAME:-}
+      SHARE_AUTH_PASSWORD: ${SHARE_AUTH_PASSWORD:-}
       SERVER_PORT: "18080"
     volumes:
       - relaysend-share-data:/data/shares
