@@ -6213,7 +6213,7 @@ index 7773ac4..e7b940b 100644
  final _logger = Logger('Refena');
  
 diff --git a/app/lib/config/theme.dart b/app/lib/config/theme.dart
-index 2961aac..04fd863 100644
+index 2961aac..1589a5e 100644
 --- a/app/lib/config/theme.dart
 +++ b/app/lib/config/theme.dart
 @@ -1,11 +1,11 @@
@@ -6233,13 +6233,48 @@ index 2961aac..04fd863 100644
  import 'package:yaru/yaru.dart' as yaru;
  
  final _borderRadius = BorderRadius.circular(5);
-@@ -59,6 +59,10 @@ ThemeData getTheme(ColorMode colorMode, Color customColor, Brightness brightness
+@@ -59,6 +59,22 @@ ThemeData getTheme(ColorMode colorMode, Color customColor, Brightness brightness
              iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)),
            )
          : null,
-+    navigationRailTheme: const NavigationRailThemeData(
-+      selectedLabelTextStyle: TextStyle(fontSize: 12),
-+      unselectedLabelTextStyle: TextStyle(fontSize: 12),
++    navigationRailTheme: NavigationRailThemeData(
++      backgroundColor: colorScheme.surface,
++      indicatorColor: colorScheme.secondaryContainer,
++      selectedIconTheme: IconThemeData(color: colorScheme.onSecondaryContainer),
++      unselectedIconTheme: IconThemeData(color: colorScheme.onSurfaceVariant),
++      selectedLabelTextStyle: TextStyle(
++        fontSize: 12,
++        fontWeight: FontWeight.w600,
++        color: colorScheme.onSurface,
++      ),
++      unselectedLabelTextStyle: TextStyle(
++        fontSize: 12,
++        color: colorScheme.onSurfaceVariant,
++      ),
++      labelType: NavigationRailLabelType.all,
++    ),
+     inputDecorationTheme: InputDecorationTheme(
+       filled: true,
+       fillColor: colorScheme.secondaryContainer,
+@@ -186,6 +202,22 @@ ThemeData _getYaruTheme(Brightness brightness) {
+             iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)),
+           )
+         : null,
++    navigationRailTheme: NavigationRailThemeData(
++      backgroundColor: colorScheme.surface,
++      indicatorColor: colorScheme.secondaryContainer,
++      selectedIconTheme: IconThemeData(color: colorScheme.onSecondaryContainer),
++      unselectedIconTheme: IconThemeData(color: colorScheme.onSurfaceVariant),
++      selectedLabelTextStyle: TextStyle(
++        fontSize: 12,
++        fontWeight: FontWeight.w600,
++        color: colorScheme.onSurface,
++      ),
++      unselectedLabelTextStyle: TextStyle(
++        fontSize: 12,
++        color: colorScheme.onSurfaceVariant,
++      ),
++      labelType: NavigationRailLabelType.all,
 +    ),
      inputDecorationTheme: InputDecorationTheme(
        filled: true,
@@ -12496,7 +12531,7 @@ index 9a7387c..c713281 100644
  /// This is a noop version of the original view model.
  /// Used to compile the FOSS version of the app by removing the original provider above.
 diff --git a/app/lib/pages/home_page.dart b/app/lib/pages/home_page.dart
-index 5c2cf8b..164a7a1 100644
+index 5c2cf8b..b7096f1 100644
 --- a/app/lib/pages/home_page.dart
 +++ b/app/lib/pages/home_page.dart
 @@ -2,17 +2,18 @@ import 'dart:io';
@@ -12528,10 +12563,14 @@ index 5c2cf8b..164a7a1 100644
  
  enum HomeTab {
    receive(Icons.wifi),
-@@ -111,16 +112,9 @@ class _HomePageState extends State<HomePage> with Refena {
-                     extended: sizingInformation.isDesktop,
+@@ -108,21 +109,12 @@ class _HomePageState extends State<HomePage> with Refena {
+                   NavigationRail(
+                     selectedIndex: vm.currentTab.index,
+                     onDestinationSelected: (index) => vm.changeTab(HomeTab.values[index]),
+-                    extended: sizingInformation.isDesktop,
++                    extended: false,
                      backgroundColor: Theme.of(context).cardColorWithElevation,
-                     leading: sizingInformation.isDesktop
+-                    leading: sizingInformation.isDesktop
 -                        ? const Column(
 -                            children: [
 -                              SizedBox(height: 20),
@@ -12542,12 +12581,15 @@ index 5c2cf8b..164a7a1 100644
 -                              ),
 -                              SizedBox(height: 20),
 -                            ],
-+                        ? const Padding(
-+                            padding: EdgeInsets.only(top: 20),
-+                            child: RelaySendBrand(withText: true, size: 44),
-                           )
-                         : null,
+-                          )
+-                        : null,
++                    leading: const Padding(
++                      padding: EdgeInsets.only(top: 18, bottom: 10),
++                      child: RelaySendBrand(withText: false, size: 38),
++                    ),
                      destinations: HomeTab.values.map((tab) {
+                       return NavigationRailDestination(
+                         icon: Icon(tab.icon),
 diff --git a/app/lib/pages/home_page_controller.dart b/app/lib/pages/home_page_controller.dart
 index 6fd6ad0..fe4dbb5 100644
 --- a/app/lib/pages/home_page_controller.dart
@@ -15388,10 +15430,10 @@ index b58ba85..f0fd440 100644
        metadata: metadata?.toFileMetadata(),
      );
 diff --git a/app/lib/provider/persistence_provider.dart b/app/lib/provider/persistence_provider.dart
-index 55a6f18..3c68886 100644
+index 55a6f18..e9dafc7 100644
 --- a/app/lib/provider/persistence_provider.dart
 +++ b/app/lib/provider/persistence_provider.dart
-@@ -4,26 +4,27 @@ import 'dart:io';
+@@ -4,26 +4,28 @@ import 'dart:io';
  import 'package:collection/collection.dart';
  import 'package:flutter/foundation.dart';
  import 'package:flutter/material.dart';
@@ -15426,6 +15468,7 @@ index 55a6f18..3c68886 100644
 +import 'package:relaysend_app/util/alias_generator.dart';
 +import 'package:relaysend_app/util/native/autostart_helper.dart';
 +import 'package:relaysend_app/util/native/context_menu_helper.dart';
++import 'package:relaysend_app/util/native/device_info_helper.dart';
 +import 'package:relaysend_app/util/native/platform_check.dart';
 +import 'package:relaysend_app/util/security_helper.dart';
 +import 'package:relaysend_app/util/shared_preferences/shared_preferences_file.dart';
@@ -15434,7 +15477,7 @@ index 55a6f18..3c68886 100644
  import 'package:shared_preferences/shared_preferences.dart';
  import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
  import 'package:uuid/uuid.dart';
-@@ -49,6 +50,7 @@ const _version = 'ls_version';
+@@ -49,6 +51,7 @@ const _version = 'ls_version';
  const _securityContext = 'ls_security_context';
  
  // WebRTC
@@ -15442,7 +15485,32 @@ index 55a6f18..3c68886 100644
  const _signalingServers = 'ls_signaling_servers';
  const _stunServers = 'ls_stun_servers';
  
-@@ -174,6 +176,17 @@ class PersistenceService {
+@@ -68,6 +71,7 @@ const _saveWindowPlacement = 'ls_save_window_placement';
+ // Settings
+ const _showToken = 'ls_show_token';
+ const _aliasKey = 'ls_alias';
++const _aliasCustomKey = 'ls_alias_custom';
+ const _themeKey = 'ls_theme'; // now called brightness
+ const _colorKey = 'ls_color';
+ const _customColorKey = 'ls_custom_color'; // RRGGBB hex, used by ColorMode.custom
+@@ -166,14 +170,32 @@ class PersistenceService {
+       await prefs.setString(_showToken, const Uuid().v4());
+     }
+ 
+-    if (prefs.getString(_aliasKey) == null) {
+-      await prefs.setString(_aliasKey, generateRandomAlias());
++    final storedAlias = prefs.getString(_aliasKey);
++    var aliasCustom = prefs.getBool(_aliasCustomKey);
++    if (aliasCustom == null) {
++      aliasCustom = storedAlias != null && !isGeneratedAlias(storedAlias);
++      await prefs.setBool(_aliasCustomKey, aliasCustom);
++    }
++
++    if (!aliasCustom) {
++      await prefs.setString(_aliasKey, await getSystemDeviceName());
+     }
+ 
+     if (prefs.getString(_securityContext) == null) {
        await prefs.setString(_securityContext, jsonEncode(await generateSecurityContext()));
      }
  
@@ -15460,7 +15528,7 @@ index 55a6f18..3c68886 100644
      if (isFirstAppStart) {
        final systemAnimations = await getSystemAnimationsStatus();
        if (!systemAnimations) {
-@@ -226,6 +239,14 @@ class PersistenceService {
+@@ -226,6 +248,14 @@ class PersistenceService {
      await _prefs.setString(_securityContext, jsonEncode(context));
    }
  
@@ -15475,6 +15543,19 @@ index 55a6f18..3c68886 100644
    List<String>? getSignalingServers() {
      final serversRaw = _prefs.getString(_signalingServers);
      if (serversRaw == null) {
+@@ -277,10 +307,11 @@ class PersistenceService {
+   }
+ 
+   String getAlias() {
+-    return _prefs.getString(_aliasKey) ?? generateRandomAlias();
++    return _prefs.getString(_aliasKey) ?? 'RelaySend';
+   }
+ 
+   Future<void> setAlias(String alias) async {
++    await _prefs.setBool(_aliasCustomKey, true);
+     await _prefs.setString(_aliasKey, alias);
+   }
+ 
 diff --git a/app/lib/provider/purchase_provider.dart b/app/lib/provider/purchase_provider.dart
 deleted file mode 100644
 index ecc8b82..0000000
@@ -15783,7 +15864,7 @@ index fd281af..5f5a88a 100644
  import 'package:window_manager/window_manager.dart';
  
 diff --git a/app/lib/util/alias_generator.dart b/app/lib/util/alias_generator.dart
-index 6fef585..47a36bf 100644
+index 6fef585..ad07687 100644
 --- a/app/lib/util/alias_generator.dart
 +++ b/app/lib/util/alias_generator.dart
 @@ -1,6 +1,6 @@
@@ -15794,6 +15875,24 @@ index 6fef585..47a36bf 100644
  
  String generateRandomAlias() {
    final random = Random();
+@@ -13,3 +13,17 @@ String generateRandomAlias() {
+     fruit: fruits[random.nextInt(fruits.length)],
+   );
+ }
++
++bool isGeneratedAlias(String alias) {
++  for (final locale in AppLocale.values) {
++    final generator = locale.translations.aliasGenerator;
++    for (final adjective in generator.adjectives) {
++      for (final fruit in generator.fruits) {
++        if (generator.combination(adjective: adjective, fruit: fruit) == alias) {
++          return true;
++        }
++      }
++    }
++  }
++  return false;
++}
 diff --git a/app/lib/util/favorites.dart b/app/lib/util/favorites.dart
 index c3f7221..9c83f1d 100644
 --- a/app/lib/util/favorites.dart
@@ -15890,6 +15989,64 @@ index c970410..d5ee0ac 100644
  import 'package:share_handler/share_handler.dart';
  import 'package:wechat_assets_picker/wechat_assets_picker.dart';
  
+diff --git a/app/lib/util/native/device_info_helper.dart b/app/lib/util/native/device_info_helper.dart
+index fc6e878..149899b 100644
+--- a/app/lib/util/native/device_info_helper.dart
++++ b/app/lib/util/native/device_info_helper.dart
+@@ -7,6 +7,53 @@ import 'package:slang/src/builder/model/enums.dart';
+ // ignore: implementation_imports
+ import 'package:slang/src/builder/utils/string_extensions.dart';
+ 
++Future<String> getSystemDeviceName() async {
++  try {
++    if (kIsWeb) {
++      return 'RelaySend';
++    }
++
++    final plugin = DeviceInfoPlugin();
++    switch (defaultTargetPlatform) {
++      case TargetPlatform.android:
++        final deviceInfo = await plugin.androidInfo;
++        return _firstNonEmpty([deviceInfo.name, deviceInfo.model]);
++      case TargetPlatform.iOS:
++        final deviceInfo = await plugin.iosInfo;
++        return _firstNonEmpty([deviceInfo.name, deviceInfo.localizedModel, deviceInfo.modelName]);
++      case TargetPlatform.macOS:
++        final deviceInfo = await plugin.macOsInfo;
++        return _firstNonEmpty([_withoutDomain(deviceInfo.computerName)]);
++      case TargetPlatform.windows:
++        final deviceInfo = await plugin.windowsInfo;
++        return _firstNonEmpty([_withoutDomain(deviceInfo.computerName)]);
++      case TargetPlatform.linux:
++        final deviceInfo = await plugin.linuxInfo;
++        return _firstNonEmpty([deviceInfo.prettyName, deviceInfo.name]);
++      case TargetPlatform.fuchsia:
++        return 'RelaySend';
++    }
++  } catch (_) {
++    return 'RelaySend';
++  }
++}
++
++String _withoutDomain(String value) {
++  final trimmed = value.trim();
++  final dot = trimmed.indexOf('.');
++  return dot > 0 ? trimmed.substring(0, dot) : trimmed;
++}
++
++String _firstNonEmpty(List<String> values) {
++  for (final value in values) {
++    final trimmed = value.trim();
++    if (trimmed.isNotEmpty) {
++      return trimmed;
++    }
++  }
++  return 'RelaySend';
++}
++
+ Future<DeviceInfoResult> getDeviceInfo() async {
+   final plugin = DeviceInfoPlugin();
+   final DeviceType deviceType;
 diff --git a/app/lib/util/native/directories.dart b/app/lib/util/native/directories.dart
 index fed0112..a6aaab9 100644
 --- a/app/lib/util/native/directories.dart
@@ -17494,7 +17651,7 @@ index 9bef482..bb0b93c 100644
  EXPOSE 3000
  ENTRYPOINT ["/server"]
 diff --git a/server/README.md b/server/README.md
-index 07b8b65..7bf801c 100644
+index 07b8b65..984d9a7 100644
 --- a/server/README.md
 +++ b/server/README.md
 @@ -1,3 +1,90 @@
@@ -17526,7 +17683,7 @@ index 07b8b65..7bf801c 100644
 +| `SERVER_IP` | `0.0.0.0` | 监听地址 |
 +| `SERVER_PORT` | `3000` | 监听端口 |
 +| `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
-+| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
++| `MAX_SHARE_SIZE_MB` | `300` | 单次临时分享的最大总大小（MB） |
 +| `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
 +| `MAX_SHARE_UPLOADS_PER_IP_PER_HOUR` | `100` | 每个来源 IP 每小时的临时分享上传上限 |
 +| `SHARE_DATA_DIR` | `./share-data` | 临时分享文件存储目录 |
@@ -17591,7 +17748,7 @@ index 07b8b65..7bf801c 100644
 +客户端还应配置本服务器的 WebSocket 地址作为信令服务器。
 diff --git a/server/docker-compose.yml b/server/docker-compose.yml
 new file mode 100644
-index 0000000..30e55e0
+index 0000000..83bbdf4
 --- /dev/null
 +++ b/server/docker-compose.yml
 @@ -0,0 +1,24 @@
@@ -17610,7 +17767,7 @@ index 0000000..30e55e0
 +      MAX_CONNECTIONS_PER_IP: "20"
 +      MAX_REQUESTS_PER_IP_PER_HOUR: "1000"
 +      SHARE_TTL_HOURS: "24"
-+      MAX_SHARE_SIZE_MB: "100"
++      MAX_SHARE_SIZE_MB: "300"
 +      MAX_SHARE_FILES: "20"
 +      MAX_SHARE_UPLOADS_PER_IP_PER_HOUR: "100"
 +      SHARE_DATA_DIR: /data/shares
@@ -17816,21 +17973,22 @@ index 60da579..8c65e47 100644
  pub(crate) mod ws_controller;
 diff --git a/server/src/controller/share_controller.rs b/server/src/controller/share_controller.rs
 new file mode 100644
-index 0000000..3de5b1c
+index 0000000..ffd931e
 --- /dev/null
 +++ b/server/src/controller/share_controller.rs
-@@ -0,0 +1,1396 @@
+@@ -0,0 +1,1695 @@
 +use crate::config::error::AppError;
 +use crate::config::state::{AppState, Share, ShareStore, SharedFile};
 +use crate::util::ip::get_client_ip;
-+use axum::extract::{ConnectInfo, Multipart, Path, State};
++use axum::extract::{ConnectInfo, Form, Multipart, Path, State};
 +use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 +use axum::response::{Html, IntoResponse, Redirect, Response};
 +use base64::engine::general_purpose::STANDARD as BASE64;
 +use base64::Engine as _;
++use std::collections::HashMap;
 +use std::fmt::Write as _;
 +use std::net::{IpAddr, SocketAddr};
-+use std::sync::LazyLock;
++use std::sync::{LazyLock, Mutex as StdMutex};
 +use std::time::{Duration, SystemTime, UNIX_EPOCH};
 +use tokio::time::sleep;
 +use uuid::Uuid;
@@ -17839,7 +17997,7 @@ index 0000000..3de5b1c
 +    std::env::var("MAX_SHARE_SIZE_MB")
 +        .ok()
 +        .and_then(|value| value.parse::<usize>().ok())
-+        .unwrap_or(100)
++        .unwrap_or(300)
 +        .saturating_mul(1024 * 1024)
 +});
 +
@@ -17878,6 +18036,13 @@ index 0000000..3de5b1c
 +        .and_then(|value| value.parse::<u64>().ok())
 +        .unwrap_or(5)
 +});
++
++const SHARE_SESSION_COOKIE: &str = "share_session";
++const SHARE_SESSION_TTL_SECS: u64 = 7 * 24 * 60 * 60;
++
++/// In-memory session map: token -> (username, unix expiry).
++static SHARE_SESSIONS: LazyLock<StdMutex<HashMap<String, (String, u64)>>> =
++    LazyLock::new(|| StdMutex::new(HashMap::new()));
 +
 +/// Statically configured Basic Auth accounts that may create temporary shares.
 +/// No registration endpoint exists; accounts are managed by the server admin.
@@ -17929,8 +18094,40 @@ index 0000000..3de5b1c
 +    diff == 0
 +}
 +
++fn now_unix_secs() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map(|duration| duration.as_secs())
++        .unwrap_or(0)
++}
++
++fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
++    let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
++    cookie.split(';').find_map(|part| {
++        let (key, value) = part.trim().split_once('=')?;
++        if key == SHARE_SESSION_COOKIE {
++            Some(value.trim().to_owned())
++        } else {
++            None
++        }
++    })
++}
++
++fn session_username(headers: &HeaderMap) -> Option<String> {
++    let token = session_cookie_value(headers)?;
++    let mut sessions = SHARE_SESSIONS.lock().unwrap();
++    let now = now_unix_secs();
++    match sessions.get(&token) {
++        Some((username, expires_at)) if *expires_at > now => Some(username.clone()),
++        _ => {
++            sessions.remove(&token);
++            None
++        }
++    }
++}
++
 +fn authenticated_user(headers: &HeaderMap) -> Option<String> {
-+    authenticated_user_with(headers, &SHARE_AUTH_USERS)
++    authenticated_user_with(headers, &SHARE_AUTH_USERS).or_else(|| session_username(headers))
 +}
 +
 +fn authenticated_user_with(headers: &HeaderMap, users: &[(String, String)]) -> Option<String> {
@@ -17945,15 +18142,6 @@ index 0000000..3de5b1c
 +        .map(|(user, _)| user.clone())
 +}
 +
-+fn unauthorized_response() -> Response {
-+    let mut response = StatusCode::UNAUTHORIZED.into_response();
-+    response.headers_mut().insert(
-+        header::WWW_AUTHENTICATE,
-+        HeaderValue::from_static("Basic realm=\"RelaySend temporary shares\""),
-+    );
-+    response
-+}
-+
 +pub async fn root() -> Redirect {
 +    Redirect::to("/share")
 +}
@@ -17964,7 +18152,88 @@ index 0000000..3de5b1c
 +    }
 +    match authenticated_user(&headers) {
 +        Some(username) => Html(share_page_html(&username)).into_response(),
-+        None => unauthorized_response(),
++        None => share_login_page().await,
++    }
++}
++
++#[derive(serde::Deserialize)]
++pub struct ShareLoginForm {
++    username: String,
++    password: String,
++}
++
++pub async fn share_login_page() -> Response {
++    Html(share_login_page_html(None)).into_response()
++}
++
++pub async fn share_login(headers: HeaderMap, Form(form): Form<ShareLoginForm>) -> Response {
++    if SHARE_AUTH_USERS.is_empty() {
++        return Html(share_auth_unavailable_page()).into_response();
++    }
++
++    let valid = SHARE_AUTH_USERS
++        .iter()
++        .any(|(user, pass)| constant_time_eq(user, &form.username) && constant_time_eq(pass, &form.password));
++    if !valid {
++        return Html(share_login_page_html(Some("用户名或密码错误，请重新输入"))).into_response();
++    }
++
++    let token = Uuid::new_v4().simple().to_string();
++    let now = now_unix_secs();
++    {
++        let mut sessions = SHARE_SESSIONS.lock().unwrap();
++        sessions.retain(|_, (_, expires_at)| *expires_at > now);
++        if sessions.len() >= 2000 {
++            if let Some(oldest) = sessions.keys().next().cloned() {
++                sessions.remove(&oldest);
++            }
++        }
++        sessions.insert(token.clone(), (form.username.clone(), now + SHARE_SESSION_TTL_SECS));
++    }
++
++    let mut response = Redirect::to("/share").into_response();
++    set_session_cookie(&mut response, &token, headers.get("x-forwarded-proto"));
++    response
++}
++
++pub async fn share_logout(headers: HeaderMap) -> Response {
++    if let Some(token) = session_cookie_value(&headers) {
++        SHARE_SESSIONS.lock().unwrap().remove(&token);
++    }
++
++    let mut response = Redirect::to("/share").into_response();
++    if let Ok(header_value) = HeaderValue::from_str(&format!(
++        "{SHARE_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
++    )) {
++        response.headers_mut().insert(header::SET_COOKIE, header_value);
++    }
++    response
++}
++
++fn set_session_cookie(
++    response: &mut Response,
++    token: &str,
++    forwarded_proto: Option<&HeaderValue>,
++) {
++    let secure = forwarded_proto
++        .and_then(|value| value.to_str().ok())
++        .is_some_and(|value| {
++            value
++                .split(',')
++                .next()
++                .unwrap_or("")
++                .trim()
++                .eq_ignore_ascii_case("https")
++        });
++
++    let mut cookie = format!(
++        "{SHARE_SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={SHARE_SESSION_TTL_SECS}"
++    );
++    if secure {
++        cookie.push_str("; Secure");
++    }
++    if let Ok(header_value) = HeaderValue::from_str(&cookie) {
++        response.headers_mut().insert(header::SET_COOKIE, header_value);
 +    }
 +}
 +
@@ -18321,6 +18590,28 @@ index 0000000..3de5b1c
 +      border-radius: 50%;
 +      background: var(--accent);
 +    }
++    .top-actions {
++      display: flex;
++      align-items: center;
++      justify-content: flex-end;
++      gap: 10px;
++      flex-wrap: wrap;
++    }
++    .logout {
++      padding: 7px 13px;
++      border: 1px solid var(--border);
++      border-radius: 999px;
++      background: var(--surface);
++      color: var(--muted);
++      font-size: 13px;
++      font-weight: 600;
++      cursor: pointer;
++      transition: border-color 0.15s ease, color 0.15s ease;
++    }
++    .logout:hover {
++      border-color: var(--accent);
++      color: var(--text);
++    }
 +    .hero { margin-bottom: 28px; }
 +    .hero h1 {
 +      margin: 0 0 10px;
@@ -18492,7 +18783,12 @@ index 0000000..3de5b1c
 +  <main class="main">
 +    <header class="topbar">
 +      <div class="brand"><div class="brand-mark">RS</div><span>RelaySend</span></div>
-+      <span class="pill">分享者：__AUTH_USERNAME__</span>
++      <div class="top-actions">
++        <span class="pill">分享者：__AUTH_USERNAME__</span>
++        <form action="/share/logout" method="get">
++          <button class="logout" type="submit">退出登录</button>
++        </form>
++      </div>
 +    </header>
 +    <section class="hero">
 +      <h1>创建临时分享</h1>
@@ -18688,6 +18984,166 @@ index 0000000..3de5b1c
 +</html>"#;
 +
 +    PAGE.to_owned()
++}
++
++fn share_login_page_html(error: Option<&str>) -> String {
++    const PAGE: &str = r#"<!doctype html>
++<html lang="zh-CN">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <meta name="color-scheme" content="light dark">
++  <title>登录 - RelaySend 临时分享</title>
++  <style>
++    :root {
++      color-scheme: light dark;
++      --bg: #f4f6f1;
++      --surface: #ffffff;
++      --surface-2: #f0f3ec;
++      --border: #dce3d8;
++      --text: #18211b;
++      --muted: #65726a;
++      --accent: #0f9d6c;
++      --accent-strong: #0b7f57;
++      --accent-soft: #e6f6ee;
++      --danger: #b3543f;
++      --shadow: 0 20px 55px rgba(23, 34, 27, 0.09);
++      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
++    }
++    @media (prefers-color-scheme: dark) {
++      :root {
++        --bg: #101713;
++        --surface: #1a241f;
++        --surface-2: #222d27;
++        --border: #304039;
++        --text: #eef6f1;
++        --muted: #9eaea4;
++        --accent: #35d79b;
++        --accent-strong: #4be3ad;
++        --accent-soft: #173629;
++        --danger: #f0927c;
++        --shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
++      }
++    }
++    * { box-sizing: border-box; }
++    body {
++      margin: 0;
++      min-height: 100vh;
++      display: grid;
++      place-items: center;
++      padding: 24px;
++      background: var(--bg);
++      color: var(--text);
++      line-height: 1.6;
++    }
++    .panel {
++      width: min(100%, 440px);
++      padding: 34px;
++      border: 1px solid var(--border);
++      border-radius: 18px;
++      background: var(--surface);
++      box-shadow: var(--shadow);
++    }
++    .brand-mark {
++      width: 44px;
++      height: 44px;
++      border-radius: 12px;
++      display: grid;
++      place-items: center;
++      background: var(--accent);
++      color: #ffffff;
++      font-size: 17px;
++      font-weight: 800;
++      letter-spacing: 0;
++      margin-bottom: 18px;
++      box-shadow: 0 8px 22px rgba(15, 157, 108, 0.28);
++    }
++    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.3; letter-spacing: 0; }
++    .intro { margin: 0 0 22px; color: var(--muted); font-size: 14px; }
++    .error {
++      margin: 0 0 18px;
++      padding: 11px 14px;
++      border: 1px solid var(--danger);
++      border-radius: 10px;
++      background: rgba(179, 84, 63, 0.08);
++      color: var(--danger);
++      font-size: 13px;
++    }
++    .field { margin-bottom: 18px; }
++    .field label {
++      display: block;
++      margin: 0 0 7px;
++      font-size: 13px;
++      font-weight: 700;
++    }
++    input {
++      width: 100%;
++      padding: 11px 13px;
++      border: 1px solid var(--border);
++      border-radius: 11px;
++      background: var(--surface-2);
++      color: var(--text);
++      font: inherit;
++      outline: none;
++      transition: border-color 0.15s ease, box-shadow 0.15s ease;
++    }
++    input:focus {
++      border-color: var(--accent);
++      box-shadow: 0 0 0 4px var(--accent-soft);
++    }
++    .submit {
++      width: 100%;
++      padding: 13px 18px;
++      border: 0;
++      border-radius: 12px;
++      background: var(--accent);
++      color: #ffffff;
++      font: inherit;
++      font-size: 15px;
++      font-weight: 800;
++      cursor: pointer;
++      transition: background 0.15s ease, transform 0.12s ease;
++    }
++    .submit:hover { background: var(--accent-strong); }
++    .submit:active { transform: translateY(1px); }
++    .footer-note {
++      margin: 18px 0 0;
++      color: var(--muted);
++      font-size: 13px;
++      text-align: center;
++    }
++  </style>
++</head>
++<body>
++  <main class="panel">
++    <div class="brand-mark">RS</div>
++    <h1>分享者登录</h1>
++    <p class="intro">登录后可创建临时分享链接，接收者打开链接无需登录。</p>
++    __ERROR_HTML__
++    <form action="/share/login" method="post">
++      <div class="field">
++        <label for="username">用户名</label>
++        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
++      </div>
++      <div class="field">
++        <label for="password">密码</label>
++        <input id="password" name="password" type="password" autocomplete="current-password" required>
++      </div>
++      <button class="submit" type="submit">登录</button>
++    </form>
++    <p class="footer-note">账号由服务器管理员配置，不开放注册。</p>
++  </main>
++</body>
++</html>"#;
++
++    let error_html = match error {
++        Some(message) => format!(
++            r#"<div class="error">{}</div>"#,
++            html_escape(message)
++        ),
++        None => String::new(),
++    };
++    PAGE.replace("__ERROR_HTML__", &error_html)
 +}
 +
 +fn view_share_html(id: Uuid, share: Share) -> String {
@@ -19447,7 +19903,7 @@ index 2a817f8..788f16e 100644
                  target_peer_tx = Some(peer_state.tx.clone());
              }
 diff --git a/server/src/main.rs b/server/src/main.rs
-index 3efb369..04ab466 100644
+index 3efb369..213db39 100644
 --- a/server/src/main.rs
 +++ b/server/src/main.rs
 @@ -1,4 +1,6 @@
@@ -19457,7 +19913,7 @@ index 3efb369..04ab466 100644
  use axum::routing::get;
  use axum::Router;
  use std::net::SocketAddr;
-@@ -29,5 +31,16 @@ async fn main() {
+@@ -29,5 +31,21 @@ async fn main() {
  #[rustfmt::skip]
  fn configure_routes() -> Router<config::state::AppState> {
      Router::new()
@@ -19466,6 +19922,11 @@ index 3efb369..04ab466 100644
 +            "/share",
 +            get(share_controller::share_page).post(share_controller::create_share),
 +        )
++        .route(
++            "/share/login",
++            get(share_controller::share_login_page).post(share_controller::share_login),
++        )
++        .route("/share/logout", get(share_controller::share_logout))
 +        .route("/s/{id}", get(share_controller::view_share))
 +        .route(
 +            "/s/{id}/download/{index}",

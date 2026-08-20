@@ -98,7 +98,7 @@ Docker Compose 会同时启动 RelaySend 信令服务和 coturn。首次使用�
 | `SHARE_TTL_HOURS` | `24` | 临时分享链接保留小时数 |
 | `MIN_SHARE_TTL_MINUTES` | `5` | 临时分享链接最短有效时间（分钟） |
 | `MAX_SHARE_TTL_HOURS` | `168` | 临时分享链接最长有效时间（小时） |
-| `MAX_SHARE_SIZE_MB` | `100` | 单次临时分享的最大总大小（MB） |
+| `MAX_SHARE_SIZE_MB` | `300` | 单次临时分享的最大总大小（MB） |
 | `MAX_SHARE_FILES` | `20` | 单次临时分享的最大文件数 |
 | `SHARE_DATA_DIR` | `./share-data` | 临时分享文件存储目录 |
 | `SHARE_AUTH_USERS` | 空 | 分享登录账号，多个用逗号分隔，格式 `user1:pass1,user2:pass2` |
