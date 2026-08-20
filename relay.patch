@@ -14230,6 +14230,74 @@ index 5febff2..0000000
 -    }
 -  }
 -}
+diff --git a/app/lib/widget/relay_send_brand.dart b/app/lib/widget/relay_send_brand.dart
+new file mode 100644
+index 0000000..721a37c
+--- /dev/null
++++ b/app/lib/widget/relay_send_brand.dart
+@@ -0,0 +1,62 @@
++import 'package:flutter/material.dart';
++
++/// RelaySend brand mark and optional wordmark.
++class RelaySendBrand extends StatelessWidget {
++  final bool withText;
++  final double size;
++
++  const RelaySendBrand({
++    super.key,
++    required this.withText,
++    this.size = 56,
++  });
++
++  @override
++  Widget build(BuildContext context) {
++    final colors = Theme.of(context).colorScheme;
++    final fontSize = (size * 0.5).clamp(16.0, 34.0).toDouble();
++
++    final mark = Container(
++      width: size,
++      height: size,
++      decoration: BoxDecoration(
++        color: colors.primary,
++        borderRadius: BorderRadius.circular(size * 0.28),
++        boxShadow: [
++          BoxShadow(
++            color: colors.primary.withValues(alpha: 0.26),
++            blurRadius: size * 0.35,
++            offset: Offset(0, size * 0.12),
++          ),
++        ],
++      ),
++      child: Icon(
++        Icons.hub,
++        size: size * 0.52,
++        color: colors.onPrimary,
++      ),
++    );
++
++    if (!withText) {
++      return mark;
++    }
++
++    return Column(
++      mainAxisSize: MainAxisSize.min,
++      children: [
++        mark,
++        SizedBox(height: size * 0.18),
++        Text(
++          'RelaySend',
++          style: TextStyle(
++            fontSize: fontSize,
++            height: 1.1,
++            fontWeight: FontWeight.w700,
++            letterSpacing: 0,
++            color: colors.onSurface,
++          ),
++        ),
++      ],
++    );
++  }
++}
 diff --git a/app/linux/my_application.cc b/app/linux/my_application.cc
 index c87def2..91f8d40 100644
 --- a/app/linux/my_application.cc
