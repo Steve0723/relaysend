@@ -162,7 +162,7 @@ jobs:
           Copy-Item ../support/build/windows/x64/vcruntime140_1.dll build/windows/x64/runner/Release/
           Remove-Item build/windows/x64/runner/Release/localsend_msix_helper.msix
           Remove-Item build/windows/x64/runner/Release/install_msix_helper.ps1
-          Remove-Item build/windows/x64/runner/Release/localsend_app.exe.manifest
+          Remove-Item build/windows/x64/runner/Release/relaysend.exe.manifest
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "RelaySend-${{ needs.prepare.outputs.version }}-windows-x86-64.zip"
 
       - name: Upload Windows artifact
